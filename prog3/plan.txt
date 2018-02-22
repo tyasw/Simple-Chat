@@ -1,0 +1,17 @@
+1. We are being asked to implement a chat client and server service. Up to 255
+users can be affiliated with the server at any one time. To make things easier,
+there will be a separate observer and participant client. The purpose of the
+participant is to prompt a user for messages. The purpose of the observer is
+to display the various messages that users are sending. Messages can be
+broadcast to everyone in the group, or they can be sent to a single participant.
+
+2. I anticipate using select and/or poll correctly will be the most
+challenging aspect of the assignment, because we have never used these system
+calls before. It may also be tedious to do all the string processing that will
+be necessary if we want to correctly determine which observer to send a
+personalized message to. Setting up the server and client looks similar to what
+we did in the first two projects. We also dealt with having multiple
+participants in the game.
+
+3. I will utilize the man pages on select and poll, Brian's wisdom, and the
+textbook.
