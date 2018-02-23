@@ -28,6 +28,9 @@ int main( int argc, char **argv) {
 	int sd;					/* socket descriptor */
 	int port; 				/* protocol port number */
 	char *host; 			/* pointer to host name */
+	int n;					/* Number of bytes read in recv */
+
+	char valid;				// Will server let us join chat?
 
 	memset((char *)&sad,0,sizeof(sad)); /* clear sockaddr structure */
 	sad.sin_family = AF_INET; /* set family to Internet */
@@ -75,6 +78,14 @@ int main( int argc, char **argv) {
 	if (connect(sd, (struct sockaddr*)&sad, sizeof(sad)) < 0) {
 		fprintf(stderr,"connect failed\n");
 		exit(EXIT_FAILURE);
+	}
+
+	n = recv(sd, &valid, sizeof(char), MSG_WAITALL);	
+
+	if (valid == 'Y') {
+		printf("The server is allowing you to join the chat!\n");
+	} else {
+		printf("Nope!\n");
 	}
 
 	close(sd);

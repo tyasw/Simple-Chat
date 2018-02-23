@@ -17,23 +17,30 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
-#define MAX_NUM_PARTICIPANTS 255
-#define MAX_NUM_OBSERVERS 255
+#define MAX_NUM_PARTICIPANTS 3 
+#define MAX_NUM_OBSERVERS 3 
 #define QLEN 6
 
 int main(int argc, char** argv) {
 	struct protoent *ptrp;		/* pointer to a protocol table entry */
+
+	struct sockaddr_in parAddrs[255];/* structures to hold addresses of participants */
+	struct sockaddr_in obsAddrs[255];/* structures to hold addresses of observers */
+	int obsSds[255];			/* observer socket descriptors */
+	int parSds[255];			/* participant socket descriptors */
 	struct sockaddr_in sParAd;	/* structure to hold server's address and participant */
 	struct sockaddr_in sObsAd;	/* structure to hold server's address and observer */
-	struct sockaddr_in parAd;	/* structure to hold participant's address */
-	struct sockaddr_in obsAd;	/* structure to hold observer's address */
-	int servObsSd, servParSd, obsSd, parSd;	/* socket descriptors */
+
+//	struct sockaddr_in parAd;	/* structure to hold participant's address */
+//	struct sockaddr_in obsAd;	/* structure to hold observer's address */
+	int servObsSd, servParSd;//, obsSd, parSd;	/* socket descriptors */
 	int pport, oport;			/* protocol address */
 	int obsALen, parALen;		/* length of addresses */
 	int optval = 1;				/* boolean value when we set socket option */
 
-	int numObservers = 0;
-	int numParticipants = 0;
+	int curNumObservers = 0;
+	int curNumParticipants = 0;
+	char valid;					// Will we let client join?
 
 	if( argc != 3 ) {
 		fprintf(stderr,"Error: Wrong number of arguments\n");
@@ -42,13 +49,25 @@ int main(int argc, char** argv) {
 		exit(EXIT_FAILURE);
 	}
 
-	memset((char *)&sParAd,0,sizeof(sParAd));	/* clear sockaddr structure */
-	sParAd.sin_family = AF_INET; 				/* set family to Internet */
-	sParAd.sin_addr.s_addr = INADDR_ANY;		/* set the local IP address */
+	for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
+		memset((char*) &parAddrs[i], 0, sizeof(parAddrs[i])); /* clear struct */
+		parAddrs[i].sin_family = AF_INET;	/* set family to internet */
+		parAddrs[i].sin_addr.s_addr = INADDR_ANY;	/* set local IP address */
+	}
 
-	memset((char *)&sObsAd,0,sizeof(sObsAd));	/* clear sockaddr structure */
-	sObsAd.sin_family = AF_INET;				/* set family to Internet */
-	sObsAd.sin_addr.s_addr = INADDR_ANY;		/* set the local IP address */
+	for (int i = 0; i < MAX_NUM_OBSERVERS; i++) {
+		memset((char*) &obsAddrs[i], 0, sizeof(obsAddrs[i])); /* clear struct */
+		obsAddrs[i].sin_family = AF_INET;	/* set family to internet */
+		obsAddrs[i].sin_addr.s_addr = INADDR_ANY;	/* set local IP address */
+	}
+
+//	memset((char *)&sParAd,0,sizeof(sParAd));	/* clear sockaddr structure */
+//	sParAd.sin_family = AF_INET; 				/* set family to Internet */
+//	sParAd.sin_addr.s_addr = INADDR_ANY;		/* set the local IP address */
+//
+//	memset((char *)&sObsAd,0,sizeof(sObsAd));	/* clear sockaddr structure */
+//	sObsAd.sin_family = AF_INET;				/* set family to Internet */
+//	sObsAd.sin_addr.s_addr = INADDR_ANY;		/* set the local IP address */
 
 	pport = atoi(argv[1]);
 	if (pport > 0) { /* test for illegal value */
@@ -125,38 +144,74 @@ int main(int argc, char** argv) {
 		fprintf(stderr,"Error: Listen failed\n");
 		exit(EXIT_FAILURE);
 	}
+
+	for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
+		parSds[i] = 0;
+		obsSds[i] = 0;
+	}
 	
 	while (1) {
-		// Set up select() for incoming connection requests
+		// Set up select() for participants and observers
 		fd_set inSet;
 
-		// Initialize set of socket descriptors
 		FD_ZERO(&inSet);
+
 		FD_SET(servParSd, &inSet);
 		FD_SET(servObsSd, &inSet);
 
 		select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
+		if (FD_ISSET(servParSd, &inSet)) {	// Participant waiting to connect
+			parALen = sizeof(parAddrs[curNumParticipants]);
+			int parSd;
 
-		if (FD_ISSET(servParSd, &inSet)) {
-			printf("A participant is waiting.\n");
-			parALen = sizeof(parAd);
-			if ((parSd = accept(servParSd, (struct sockaddr*)&parAd, (socklen_t*)&parALen)) < 0) {
-				fprintf(stderr, "Error: Accept failed\n");
+			if ((parSd = accept(servParSd, (struct sockaddr*)&parSds[curNumParticipants], (socklen_t*)&parALen)) < 0) {
+				fprintf(stderr, "Error: accept failed\n");
 				exit(EXIT_FAILURE);
-			} else {
-				printf("Participant has successfully connected.\n");
 			}
-		} else if (FD_ISSET(servObsSd, &inSet)) {
-			printf("An observer is waiting.\n");
-			obsALen = sizeof(obsAd);
-			if ((obsSd = accept(servObsSd, (struct sockaddr*)&obsAd, (socklen_t*)&obsALen)) < 0) {
-				fprintf(stderr, "Error: Accept failed\n");
+
+			if (curNumParticipants < MAX_NUM_PARTICIPANTS) {	// Continue
+				parSds[curNumParticipants] = parSd;
+
+				valid = 'Y';
+				send(parSds[curNumParticipants], (const void*)&valid, sizeof(char), 0);
+
+				FD_SET(parSds[curNumParticipants], &inSet);
+				printf("Participant %d is now in set\n", curNumParticipants);
+				close(parSds[curNumParticipants]);
+				curNumParticipants++;
+			} else {											// Disconnect
+				valid = 'N';
+				send(parSds[curNumParticipants], (const void*)&valid, sizeof(char), 0);
+				printf("No more participants allowed.\n");
+				close(parSd);
+			}
+		} else if (FD_ISSET(servObsSd, &inSet)) {	// Observer waiting to connect
+			obsALen = sizeof(obsAddrs[curNumObservers]);
+			int obsSd;
+
+			if ((obsSd = accept(servObsSd, (struct sockaddr*)&obsSds[curNumObservers], (socklen_t*)&obsALen)) < 0) {
+				fprintf(stderr, "Error: accept failed\n");
 				exit(EXIT_FAILURE);
-			} else {
-				printf("Observer has successfully connected.\n");
+			}
+
+			if (curNumObservers < MAX_NUM_OBSERVERS) {	// Continue
+				obsSds[curNumObservers] = obsSd;
+
+				valid = 'Y';
+				send(obsSds[curNumObservers], (const void*)&valid, sizeof(char), 0);
+
+				FD_SET(obsSds[curNumObservers], &inSet);
+				printf("Observer %d is now in set\n", curNumObservers);
+				close(obsSds[curNumObservers]);
+				curNumObservers++;
+			} else {											// Disconnect
+				valid = 'N';
+				send(obsSds[curNumObservers], (const void*)&valid, sizeof(char), 0);
+				printf("No more observers allowed.\n");
+				close(obsSd);
 			}
 		} else {
-			printf("No one is trying to connect.\n");
+			fprintf(stderr, "Select error.\n");
 		}
 
 /*
