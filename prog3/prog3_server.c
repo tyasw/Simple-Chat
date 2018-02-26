@@ -161,13 +161,22 @@ int main(int argc, char** argv) {
 	while (1) {
 		// Set up select() for participants and observers
 		fd_set inSet;
+		fd_set outSet;
 
 		FD_ZERO(&inSet);
+		FD_ZERO(&outSet);
 
 		FD_SET(servParSd, &inSet);
 		FD_SET(servObsSd, &inSet);
 
-		activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
+		for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
+			FD_SET(parSds[i], &inSet);
+			FD_SET(parSds[i], &outSet);
+			FD_SET(obsSds[i], &inSet);
+			FD_SET(obsSds[i], &outSet);
+		}
+
+		activity = select(FD_SETSIZE, &inSet, &outSet, NULL, NULL);
 		if (activity < 0) {
 			fprintf(stderr, "Select error.\n");
 		}
@@ -239,16 +248,30 @@ int main(int argc, char** argv) {
 
 						// Verify that username is valid and is not being used already
 						int valid = isValidName(username);
+						char response;
+						if (valid) {
+							int available = isAvailablename(username);
+							if (available) {
+								response = 'Y';
+								
+								send(parSds[i], &response, sizeof(char), 0);
 
-						// Send 'Y', 'T', or 'I' to participant
+								// send msg to all observers
 
-						// If valid, send msg to all observers saying that user $username has joined
+								activePars[i] = 1;		// Participant is now active
 
-						// If valid, participant is now an "active participant"
-						activePars[i] = 1;		// Participant is now active
-
-						// Associate username with parSd and store in trie
-						curNumParticipants++;
+								// Associate username with parSd and store in trie
+								curNumParticipants++;
+							} else {
+								// reset timer
+								response = 'T';
+								send(parSds[i], &response, sizeof(char), 0);
+							}
+						} else {
+							// don't reset timer
+							response = 'I';
+							send(parSds[i], &response, sizeof(char), 0);
+						}
 					}
 				}
 			}
@@ -272,6 +295,16 @@ int main(int argc, char** argv) {
 
 					// If valid, participant is now an "active participant"
 					curNumObservers++;
+				}
+			}
+
+			for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
+				if (FD_ISSET(parSds[i], &outSet)) {
+				}
+			}
+
+			for (int i = 0; i < MAX_NUM_OBSERVERS; i++) {
+				if (FD_ISSET(obsSds[i], &outSet)) {
 				}
 			}
 		}
