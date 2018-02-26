@@ -39,7 +39,7 @@ int main( int argc, char **argv) {
 	if( argc != 3 ) {
 		fprintf(stderr,"Error: Wrong number of arguments\n");
 		fprintf(stderr,"usage:\n");
-		fprintf(stderr,"./observer server_address server_port\n");
+		fprintf(stderr,"./participant server_address server_port\n");
 		exit(EXIT_FAILURE);
 	}
 
@@ -90,7 +90,7 @@ int main( int argc, char **argv) {
 
 		char username[MAX_WORD_LEN + 2];	// max length + newline + null
 		fgets(username, MAX_WORD_LEN + 2, stdin);
-		uint8_t nameLen = strlen(username) - 1;
+		uint8_t nameLen = strlen(username) - 1;		// don't include the null
 		printf("You entered: %s\n", username);
 		while (nameLen == 0 || username[nameLen] != '\n') {
 			printf("Please try again: ");

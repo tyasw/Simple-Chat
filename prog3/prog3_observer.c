@@ -20,6 +20,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
+#define MAX_WORD_LEN 10
 
 int main( int argc, char **argv) {
 	struct hostent *ptrh;	/* pointer to a host table entry */
@@ -82,10 +83,27 @@ int main( int argc, char **argv) {
 
 	n = recv(sd, &valid, sizeof(char), MSG_WAITALL);	
 
+	// CAN I MATCH AN OBSERVER WITH SOMEONE ELSE'S PARTICIPANT???
 	if (valid == 'Y') {
-		printf("The server is allowing you to join the chat!\n");
+		printf("Please enter a 1 - 10 character username. It should be the name\n");
+		printf("of the participant you want to observe: ");
+
+		char username[MAX_WORD_LEN + 2];	// max length + newline + null
+		fgets(username, MAX_WORD_LEN + 2, stdin);
+		uint8_t nameLen = strlen(username) - 1;		// don't include the null
+		printf("You entered: %s\n", username);
+		while (nameLen == 0 || username[nameLen] != '\n') {
+			printf("Please try again: ");
+			fgets(username, MAX_WORD_LEN + 2, stdin);
+			nameLen = strlen(username) - 1;
+			printf("You entered: %s\n", username);
+		}
+		username[nameLen] = '\0';
+
+		send(sd, &nameLen, sizeof(uint8_t), 0);
+		send(sd, &username, nameLen * sizeof(char), 0);
 	} else {
-		printf("Nope!\n");
+		printf("The server is not allowing any more observers to join!\n");
 	}
 
 	close(sd);
