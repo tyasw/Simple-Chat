@@ -20,6 +20,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
+#define MAX_WORD_LEN 10
 
 int main( int argc, char **argv) {
 	struct hostent *ptrh;	/* pointer to a host table entry */
@@ -83,9 +84,26 @@ int main( int argc, char **argv) {
 	n = recv(sd, &valid, sizeof(char), MSG_WAITALL);	
 
 	if (valid == 'Y') {
-		printf("The server is allowing you to join the chat!\n");
+		// Prompt for username
+		printf("Please enter a 1 - 10 character username. It may only contain\n");
+		printf("upper and lower-case letters, numbers, and underscores: ");
+
+		char username[MAX_WORD_LEN + 2];	// max length + newline + null
+		fgets(username, MAX_WORD_LEN + 2, stdin);
+		uint8_t nameLen = strlen(username) - 1;
+		printf("You entered: %s\n", username);
+		while (nameLen == 0 || username[nameLen] != '\n') {
+			printf("Please try again: ");
+			fgets(username, MAX_WORD_LEN + 2, stdin);
+			nameLen = strlen(username) - 1;
+			printf("You entered: %s\n", username);
+		}
+		username[nameLen] = '\0';
+
+		send(sd, &nameLen, sizeof(uint8_t), 0);
+		send(sd, &username, nameLen * sizeof(char), 0);
 	} else {
-		printf("Nope!\n");
+		printf("The server is not allowing any more participants to join.\n");
 	}
 
 	close(sd);

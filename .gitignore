@@ -24,5 +24,8 @@ hs_err_pid*
 # vim swap files
 *.swp
 
+# vim backup files
+*~
+
 # miscellaneous
 *.pdf
