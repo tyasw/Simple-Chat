@@ -23,7 +23,7 @@
 #define MAX_WORD_LEN 10
 
 void getUserName(char* username);
-void run();
+void run(int sd);
 
 int main( int argc, char **argv) {
 	struct hostent *ptrh;	/* pointer to a host table entry */
@@ -95,18 +95,18 @@ int main( int argc, char **argv) {
 		send(sd, &username, nameLen * sizeof(char), 0);
 
 		n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
-		while (valid != 'Y') {
-			if (valid == 'T') {
-				getUserName(username);
-				nameLen = strlen(username);
-				send(sd, &nameLen, sizeof(uint8_t), 0);
-				send(sd, &username, nameLen * sizeof(char), 0);
-				n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
-			} else {
-				// Server disconnected on us
-			}
+		while (valid != 'Y' && valid != 'N') {
+			getUserName(username);
+			nameLen = strlen(username);
+			send(sd, &nameLen, sizeof(uint8_t), 0);
+			send(sd, &username, nameLen * sizeof(char), 0);
+			n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
 		}
-		run();
+		if (valid == 'N') {
+				close(sd);
+		} else {
+			run(sd);
+		}
 	} else {
 		printf("The server is not allowing any more observers to join!\n");
 	}
@@ -140,7 +140,14 @@ void getUserName(char* username) {
  *
  * Receive all messages sent to us by the server.
  */
-void run() {
+void run(int sd) {
 	while (1) {
+		uint16_t msgLen;
+		int n;
+		n = recv(sd, &msgLen, sizeof(uint16_t), MSG_WAITALL);
+		char msg[msgLen];
+		n = recv(sd, &msg, msgLen * sizeof(char), MSG_WAITALL);
+		msg[msgLen] = '\0';
+		printf("%s\n", msg);
 	}
 }
