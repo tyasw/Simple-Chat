@@ -21,6 +21,10 @@
 #include <netdb.h>
 
 #define MAX_WORD_LEN 10
+#define MAX_MSG_LEN 1000
+
+void getUserName(char* username);
+void run(int sd);
 
 int main( int argc, char **argv) {
 	struct hostent *ptrh;	/* pointer to a host table entry */
@@ -85,27 +89,75 @@ int main( int argc, char **argv) {
 
 	if (valid == 'Y') {
 		// Prompt for username
-		printf("Please enter a 1 - 10 character username. It may only contain\n");
-		printf("upper and lower-case letters, numbers, and underscores: ");
-
 		char username[MAX_WORD_LEN + 2];	// max length + newline + null
-		fgets(username, MAX_WORD_LEN + 2, stdin);
-		uint8_t nameLen = strlen(username) - 1;		// don't include the null
-		printf("You entered: %s\n", username);
-		while (nameLen == 0 || username[nameLen] != '\n') {
-			printf("Please try again: ");
-			fgets(username, MAX_WORD_LEN + 2, stdin);
-			nameLen = strlen(username) - 1;
-			printf("You entered: %s\n", username);
-		}
-		username[nameLen] = '\0';
+		getUserName(username);
+		uint8_t nameLen = strlen(username);
 
 		send(sd, &nameLen, sizeof(uint8_t), 0);
 		send(sd, &username, nameLen * sizeof(char), 0);
+
+		n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
+		while (valid != 'Y') {
+			if (valid == 'T') {
+				// timer is reset; try again
+				getUserName(username);
+				nameLen = strlen(username);
+				send(sd, &nameLen, sizeof(uint8_t), 0);
+				send(sd, &username, nameLen * sizeof(char), 0);
+				n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
+			} else if (valid == 'I') {
+				// try again, timer not reset
+				getUserName(username);
+				nameLen = strlen(username);
+				send(sd, &nameLen, sizeof(uint8_t), 0);
+				send(sd, &username, nameLen * sizeof(char), 0);
+				n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
+			}
+		}
+		run(sd);
 	} else {
 		printf("The server is not allowing any more participants to join.\n");
 	}
 
 	close(sd);
 	exit(EXIT_SUCCESS);
+}
+
+/* getUserName
+ *
+ * Prompt the user for a username. When this function returns, username points
+ * to the name the user entered.
+ */
+void getUserName(char* username) {
+	printf("Please enter a 1 - 10 character username. It may only contain\n");
+	printf("upper and lower-case letters, numbers, and underscores: ");
+
+	fgets(username, MAX_WORD_LEN + 2, stdin);
+	uint8_t nameLen = strlen(username) - 1;		// don't include the null
+	printf("You entered: %s\n", username);
+	while (nameLen == 0 || username[nameLen] != '\n') {
+		// Clear fgets buffer so fgets doesn't read chars we've previously typed
+		printf("Please try again: ");
+		fgets(username, MAX_WORD_LEN + 2, stdin);
+		nameLen = strlen(username) - 1;
+		printf("You entered: %s\n", username);
+	}
+	username[nameLen] = '\0';
+}
+
+/* run
+ *
+ * Prompt the user for a message, send the message to the server, and repeat
+ * indefinitely.
+ */
+void run(int sd) {
+	while (1) {
+		char message[1000];
+		printf("Enter message: ");
+
+		fgets(message, MAX_MSG_LEN + 2, stdin);
+		uint16_t msgLen = strlen(message) - 1;	// don't include null
+		send(sd, &msgLen, sizeof(uint16_t), 0);
+		send(sd, &message, msgLen * sizeof(char), 0);
+	}
 }

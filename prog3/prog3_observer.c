@@ -22,6 +22,9 @@
 
 #define MAX_WORD_LEN 10
 
+void getUserName(char* username);
+void run();
+
 int main( int argc, char **argv) {
 	struct hostent *ptrh;	/* pointer to a host table entry */
 	struct protoent *ptrp; 	/* pointer to a protocol table entry */
@@ -83,29 +86,61 @@ int main( int argc, char **argv) {
 
 	n = recv(sd, &valid, sizeof(char), MSG_WAITALL);	
 
-	// CAN I MATCH AN OBSERVER WITH SOMEONE ELSE'S PARTICIPANT???
 	if (valid == 'Y') {
-		printf("Please enter a 1 - 10 character username. It should be the name\n");
-		printf("of the participant you want to observe: ");
-
 		char username[MAX_WORD_LEN + 2];	// max length + newline + null
-		fgets(username, MAX_WORD_LEN + 2, stdin);
-		uint8_t nameLen = strlen(username) - 1;		// don't include the null
-		printf("You entered: %s\n", username);
-		while (nameLen == 0 || username[nameLen] != '\n') {
-			printf("Please try again: ");
-			fgets(username, MAX_WORD_LEN + 2, stdin);
-			nameLen = strlen(username) - 1;
-			printf("You entered: %s\n", username);
-		}
-		username[nameLen] = '\0';
+		getUserName(username);
+		uint8_t nameLen = strlen(username);
 
 		send(sd, &nameLen, sizeof(uint8_t), 0);
 		send(sd, &username, nameLen * sizeof(char), 0);
+
+		n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
+		while (valid != 'Y') {
+			if (valid == 'T') {
+				getUserName(username);
+				nameLen = strlen(username);
+				send(sd, &nameLen, sizeof(uint8_t), 0);
+				send(sd, &username, nameLen * sizeof(char), 0);
+				n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
+			} else {
+				// Server disconnected on us
+			}
+		}
+		run();
 	} else {
 		printf("The server is not allowing any more observers to join!\n");
 	}
 
 	close(sd);
 	exit(EXIT_SUCCESS);
+}
+
+/* getUserName
+ *
+ * Prompt the user for a username. When this function returns, username points
+ * to the name the user entered.
+ */
+void getUserName(char* username) {
+	printf("Please enter a 1 - 10 character username. It should be the name\n");
+	printf("of the participant you want to observe: ");
+
+	fgets(username, MAX_WORD_LEN + 2, stdin);
+	uint8_t nameLen = strlen(username) - 1;		// don't include the null
+	printf("You entered: %s\n", username);
+	while (nameLen == 0 || username[nameLen] != '\n') {
+		printf("Please try again: ");
+		fgets(username, MAX_WORD_LEN + 2, stdin);
+		nameLen = strlen(username) - 1;
+		printf("You entered: %s\n", username);
+	}
+	username[nameLen] = '\0';
+}
+
+/* run
+ *
+ * Receive all messages sent to us by the server.
+ */
+void run() {
+	while (1) {
+	}
 }

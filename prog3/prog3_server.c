@@ -28,6 +28,7 @@ int nextAvailObserver(int* availObs);
 int isActiveParticipant(int* activePars, int i);
 int isValidName(char* username);
 int canAffiliate(char* username, int* parSd);
+int isAvailableName(char* username);
 
 int main(int argc, char** argv) {
 	struct protoent *ptrp;		/* pointer to a protocol table entry */
@@ -39,6 +40,7 @@ int main(int argc, char** argv) {
 	int availObs[255];			// boolean array of available observer sds
 	int availPars[255];			// boolean array of available participant sds
 	int activePars[255];		// boolean array of active participants
+	int parAffiliations[255];	// which observer is each participant affiliated with
 	struct sockaddr_in parAddr;	// temp structure to hold participant's address
 	struct sockaddr_in obsAddr; // temp structure to hold observer's address
 	struct sockaddr_in sParAd;	/* structure to hold server's address and participant */
@@ -156,6 +158,7 @@ int main(int argc, char** argv) {
 		availObs[i] = 1;
 		availPars[i] = 1;
 		activePars[i] = 0;
+		parAffiliations[i] = -1;
 	}
 
 	while (1) {
@@ -168,7 +171,6 @@ int main(int argc, char** argv) {
 
 		FD_SET(servParSd, &inSet);
 		FD_SET(servObsSd, &inSet);
-
 		for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
 			FD_SET(parSds[i], &inSet);
 			FD_SET(parSds[i], &outSet);
@@ -196,13 +198,23 @@ int main(int argc, char** argv) {
 				parSds[nextParSd] = parSd;
 				parAddrs[nextParSd] = parAddr;
 				valid = 'Y';
-				send(parSds[nextParSd], (const void*)&valid, sizeof(char), 0);
+				send(parSds[nextParSd], (const void*)&valid, sizeof(char), MSG_DONTWAIT);
 
-				FD_SET(parSds[nextParSd], &inSet);
+				FD_ZERO(&inSet);
+				FD_ZERO(&outSet);
+
+				FD_SET(servParSd, &inSet);
+				FD_SET(servObsSd, &inSet);
+				for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
+					FD_SET(parSds[i], &inSet);
+					FD_SET(parSds[i], &outSet);
+					FD_SET(obsSds[i], &inSet);
+					FD_SET(obsSds[i], &outSet);
+				}
 				activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
 			} else {											// Disconnect
 				valid = 'N';
-				send(parSds[curNumParticipants], (const void*)&valid, sizeof(char), 0);
+				send(parSds[curNumParticipants], (const void*)&valid, sizeof(char), MSG_DONTWAIT);
 				printf("No more participants allowed.\n");
 				close(parSd);
 			}
@@ -223,13 +235,23 @@ int main(int argc, char** argv) {
 				obsSds[nextObsSd] = obsSd;
 				obsAddrs[nextObsSd] = obsAddr;
 				valid = 'Y';
-				send(obsSds[nextObsSd], (const void*)&valid, sizeof(char), 0);
+				send(obsSds[nextObsSd], (const void*)&valid, sizeof(char), MSG_DONTWAIT);
 
-				FD_SET(obsSds[nextObsSd], &inSet);
+				FD_ZERO(&inSet);
+				FD_ZERO(&outSet);
+
+				FD_SET(servParSd, &inSet);
+				FD_SET(servObsSd, &inSet);
+				for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
+					FD_SET(parSds[i], &inSet);
+					FD_SET(parSds[i], &outSet);
+					FD_SET(obsSds[i], &inSet);
+					FD_SET(obsSds[i], &outSet);
+				}
 				activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
 			} else {											// Disconnect
 				valid = 'N';
-				send(obsSds[curNumObservers], (const void*)&valid, sizeof(char), 0);
+				send(obsSds[curNumObservers], (const void*)&valid, sizeof(char), MSG_DONTWAIT);
 				printf("No more observers allowed.\n");
 				close(obsSd);
 			}
@@ -237,7 +259,14 @@ int main(int argc, char** argv) {
 			for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
 				if (FD_ISSET(parSds[i], &inSet)) {
 					if (isActiveParticipant(activePars, i)) { // get ready to receive msg
-
+						uint16_t msgSize;
+						n = recv(parSds[i], &msgSize, sizeof(uint16_t), MSG_WAITALL);
+						if (msgSize > 1000) {
+							// disconnect on participant and any affiliated observer
+						} else {
+							char message[msgSize];
+							n = recv(parSds[i], &message, msgSize * sizeof(char), MSG_WAITALL);
+						}
 					} else { // negotiating username
 						uint8_t nameSize;
 						n = recv(parSds[i], &nameSize, sizeof(uint8_t), MSG_WAITALL);
@@ -250,29 +279,41 @@ int main(int argc, char** argv) {
 						int valid = isValidName(username);
 						char response;
 						if (valid) {
-							int available = isAvailablename(username);
+							int available = isAvailableName(username);
 							if (available) {
 								response = 'Y';
-								
-								send(parSds[i], &response, sizeof(char), 0);
-
-								// send msg to all observers
+								send(parSds[i], &response, sizeof(char), MSG_DONTWAIT);
 
 								activePars[i] = 1;		// Participant is now active
+								printf("Participant is now active.\n");
 
 								// Associate username with parSd and store in trie
+
 								curNumParticipants++;
+								// send msg to all observers
 							} else {
 								// reset timer
 								response = 'T';
-								send(parSds[i], &response, sizeof(char), 0);
+								send(parSds[i], &response, sizeof(char), MSG_DONTWAIT);
 							}
 						} else {
 							// don't reset timer
 							response = 'I';
-							send(parSds[i], &response, sizeof(char), 0);
+							send(parSds[i], &response, sizeof(char), MSG_DONTWAIT);
 						}
 					}
+					FD_ZERO(&inSet);
+					FD_ZERO(&outSet);
+
+					FD_SET(servParSd, &inSet);
+					FD_SET(servObsSd, &inSet);
+					for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
+						FD_SET(parSds[i], &inSet);
+						FD_SET(parSds[i], &outSet);
+						FD_SET(obsSds[i], &inSet);
+						FD_SET(obsSds[i], &outSet);
+					}
+					activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
 				}
 			}
 
@@ -288,13 +329,38 @@ int main(int argc, char** argv) {
 					// Verify that username is valid and is not being used already
 					int parSd = -1;
 					int valid = canAffiliate(username, &parSd);
+					char response;
+					if (valid) {
+						if (parSd >= 0) {
+							response = 'Y';
+							send(obsSds[i], &response, sizeof(char), MSG_DONTWAIT);
 
-					// Send 'Y', 'T', or 'N' to participant
+							parAffiliations[parSd] = i;
+							curNumObservers++;
+							// send msg to all observers saying that a new observer has joined
+						} else {
+							response = 'T';
+							send(obsSds[i], &response, sizeof(char), MSG_DONTWAIT);
+							// client's timer resets
+						}
+					} else {
+						response = 'N';
+						send(obsSds[i], &response, sizeof(char), MSG_DONTWAIT);
+						
+						// disconnect observer
+					}
+					FD_ZERO(&inSet);
+					FD_ZERO(&outSet);
 
-					// If valid, send msg to all observers saying that user $username has joined
-
-					// If valid, participant is now an "active participant"
-					curNumObservers++;
+					FD_SET(servParSd, &inSet);
+					FD_SET(servObsSd, &inSet);
+					for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
+						FD_SET(parSds[i], &inSet);
+						FD_SET(parSds[i], &outSet);
+						FD_SET(obsSds[i], &inSet);
+						FD_SET(obsSds[i], &outSet);
+					}
+					activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
 				}
 			}
 
@@ -368,16 +434,25 @@ int isActiveParticipant(int* activePars, int i) {
  * Checks if name includes only valid characters, and if the name is unique.
  */
 int isValidName(char* username) {
-	int valid = 0;
+	int valid = 1;
 	return valid;
 }
 
 /* canAffiliate
  *
  * Checks if observer can affiliate with participant given username. If they
- * can, parSd points to the socket descriptor of the participant.
+ * can, parSd points to the index in parSds of the participant.
  */
 int canAffiliate(char* username, int* parSd) {
-	int canAffiliate = 0;
+	int canAffiliate = 1;
 	return canAffiliate;
+}
+
+/* isAvailableName
+ *
+ * Checks if name is already being used.
+ */
+int isAvailableName(char* username) {
+	int isAvailable = 1;
+	return isAvailable;
 }
