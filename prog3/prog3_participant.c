@@ -100,6 +100,7 @@ int main( int argc, char **argv) {
 		while (valid != 'Y') {
 			if (valid == 'T') {
 				// timer is reset; try again
+				printf("%s is already taken. Please try again.\n", username);
 				getUserName(username);
 				nameLen = strlen(username);
 				send(sd, &nameLen, sizeof(uint8_t), 0);
@@ -107,6 +108,7 @@ int main( int argc, char **argv) {
 				n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
 			} else if (valid == 'I') {
 				// try again, timer not reset
+				printf("%s is an invalid name. Please try again.\n", username);
 				getUserName(username);
 				nameLen = strlen(username);
 				send(sd, &nameLen, sizeof(uint8_t), 0);
@@ -154,8 +156,8 @@ void run(int sd) {
 	while (1) {
 		char message[1000];
 		printf("Enter message: ");
-
 		fgets(message, MAX_MSG_LEN + 2, stdin);
+
 		uint16_t msgLen = strlen(message) - 1;	// don't include null
 		send(sd, &msgLen, sizeof(uint16_t), 0);
 		send(sd, &message, msgLen * sizeof(char), 0);

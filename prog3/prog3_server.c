@@ -18,6 +18,8 @@
 #include <netdb.h>
 
 #include <assert.h>
+#include <errno.h>
+#include "trie.h"
 
 #define MAX_NUM_PARTICIPANTS 5
 #define MAX_NUM_OBSERVERS 5
@@ -27,10 +29,10 @@ int nextAvailParticipant(int* availPars);
 int nextAvailObserver(int* availObs);
 int isActiveParticipant(int* activePars, int i);
 int isValidName(char* username);
-int canAffiliate(char* username, int* parSd);
-int isAvailableName(char* username);
+int canAffiliate(char* username, TRIE* names, int** parSd);
 void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
 					int* parSds, int* obsSds);
+int processPublicMsg(char* message, int msgLen, char* newLine);
 
 int main(int argc, char** argv) {
 	struct protoent *ptrp;		/* pointer to a protocol table entry */
@@ -155,13 +157,15 @@ int main(int argc, char** argv) {
 	}
 
 	for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
-		parSds[i] = -1;
-		obsSds[i] = -1;
+		parSds[i] = 0;
+		obsSds[i] = 0;
 		availObs[i] = 1;
 		availPars[i] = 1;
 		activePars[i] = 0;
 		parAffiliations[i] = -1;
 	}
+
+	TRIE* names = trie_new();
 
 	while (1) {
 		// Set up select() for participants and observers
@@ -169,9 +173,9 @@ int main(int argc, char** argv) {
 		fd_set outSet;
 
 		setupSelect(&inSet, &outSet, servParSd, servObsSd, parSds, obsSds);
-		activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
+		activity = select(FD_SETSIZE, &inSet, &outSet, NULL, NULL);
 		if (activity < 0) {
-			fprintf(stderr, "Select error.\n");
+			perror("Select:\n");
 		}
 		if (FD_ISSET(servParSd, &inSet)) {	// Participant waiting to connect
 			parALen = sizeof(parAddr);
@@ -239,8 +243,9 @@ int main(int argc, char** argv) {
 				printf("Observer name: %s\n", username);
 
 				// Verify that username is valid and is not being used already
-				int parSd = -1;
-				int valid = canAffiliate(username, &parSd);
+				int* val;
+				int valid = canAffiliate(username, names, &val);
+				int parSd = *val;	
 				char response;
 				if (valid) {
 					if (parSd >= 0) {
@@ -273,14 +278,32 @@ int main(int argc, char** argv) {
 		for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
 			if (FD_ISSET(parSds[i], &inSet)) {
 				if (isActiveParticipant(activePars, i)) { // get ready to receive msg
-					uint16_t msgSize;
-					n = recv(parSds[i], &msgSize, sizeof(uint16_t), MSG_WAITALL);
-					if (msgSize > 1000) {
+					uint16_t msgLen;
+					n = recv(parSds[i], &msgLen, sizeof(uint16_t), MSG_WAITALL);
+					if (msgLen > 1000) {
 						// disconnect on participant and any affiliated observer
 					} else {
-						char message[msgSize];
-						n = recv(parSds[i], &message, msgSize * sizeof(char), MSG_WAITALL);
+						char message[msgLen];
+						n = recv(parSds[i], &message, msgLen * sizeof(char), MSG_WAITALL);
 						printf("We received a message from %d\n", i);
+
+						// process message
+
+						// if private
+						
+						// if public
+						char newLine[msgLen + 14];
+						
+						int success = processPublicMsg(message, msgLen, newLine);
+						msgLen += 14;
+
+						// send msg to all applicable observers
+						for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
+							if (availObs[j] == 0) {
+								n = send(obsSds[j], &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
+								n = send(obsSds[j], &newLine, msgLen * sizeof(char), MSG_DONTWAIT);
+							}
+						}
 					}
 				} else { // negotiating username
 					uint8_t nameSize;
@@ -294,8 +317,8 @@ int main(int argc, char** argv) {
 					int valid = isValidName(username);
 					char response;
 					if (valid) {
-						int available = isAvailableName(username);
-						if (available) {
+						int isUsed = trie_search(names, username, 0);
+						if (!isUsed) {
 							response = 'Y';
 							n = send(parSds[i], &response, sizeof(char), MSG_DONTWAIT);
 
@@ -303,6 +326,11 @@ int main(int argc, char** argv) {
 							printf("Participant is now active.\n");
 
 							// Associate username with parSd and store in trie
+							void* userSd = &(parSds[i]);
+							int success = trie_add(names, username, userSd, sizeof(userSd));
+							if (success < 0) {
+								fprintf(stderr, "Error with adding name to list.\n");
+							}
 
 							curNumParticipants++;
 							// send msg to all observers
@@ -358,7 +386,7 @@ int main(int argc, char** argv) {
 int nextAvailParticipant(int* availPars) {
 	int nextAvailable = -1;
 	int i = 0;
-	while (i < MAX_NUM_PARTICIPANTS && availPars[i] == -1) {
+	while (i < MAX_NUM_PARTICIPANTS && availPars[i] == 0) {
 		i++;
 	}
 	
@@ -391,7 +419,7 @@ int nextAvailObserver(int* availObs) {
  */
 int isActiveParticipant(int* activePars, int i) {
 	int isActive = 0;
-	if (activePars[i]) {
+	if (activePars[i] == 1) {
 		isActive = 1;
 	}
 	return isActive;
@@ -400,9 +428,21 @@ int isActiveParticipant(int* activePars, int i) {
 /* isValidName
  *
  * Checks if name includes only valid characters, and if the name is unique.
+ * Valid characters are upper-case letters, lower-case letters, numbers, and
+ * underscores. Whitespace is not allowed.
  */
 int isValidName(char* username) {
 	int valid = 1;
+	int i = 0;
+	while (valid && username[i] != '\0') {
+		if (!((username[i] > 64 && username[i] < 91) ||
+				(username[i] > 96 && username[i] < 123) ||
+				(username[i] > 47 && username[i] < 58) ||
+				(username[i] == 95))) {
+			valid = 0;
+		}
+		i++;
+	}
 	return valid;
 }
 
@@ -411,19 +451,9 @@ int isValidName(char* username) {
  * Checks if observer can affiliate with participant given username. If they
  * can, parSd points to the index in parSds of the participant.
  */
-int canAffiliate(char* username, int* parSd) {
-	int canAffiliate = 0;
-	*parSd = 0;
+int canAffiliate(char* username, TRIE* names, int** parSd) {
+	int canAffiliate = trie_search(names, username, (void**)parSd);
 	return canAffiliate;
-}
-
-/* isAvailableName
- *
- * Checks if name is already being used.
- */
-int isAvailableName(char* username) {
-	int isAvailable = 1;
-	return isAvailable;
 }
 
 /* setupSelect
@@ -443,4 +473,25 @@ void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
 		FD_SET(obsSds[i], inSet);
 		FD_SET(obsSds[i], outSet);
 	}
+}
+
+/* processPublicMsg
+ *
+ * Prepend characters to a public message so that the sender of the message
+ * is identified, and the message looks pretty.
+ */
+int processPublicMsg(char* message, int msgLen, char* newLine) {
+	int success = 1;
+
+	newLine[0] = '>';
+	
+	// variable number of spaces (11 - len(username))
+
+	// username
+
+	//colon
+
+	//space	
+
+	return success;
 }

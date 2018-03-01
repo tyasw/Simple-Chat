@@ -96,6 +96,7 @@ int main( int argc, char **argv) {
 
 		n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
 		while (valid != 'Y' && valid != 'N') {
+			printf("Valid: %c\n", valid);
 			getUserName(username);
 			nameLen = strlen(username);
 			send(sd, &nameLen, sizeof(uint8_t), 0);
@@ -103,8 +104,10 @@ int main( int argc, char **argv) {
 			n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
 		}
 		if (valid == 'N') {
-				close(sd);
+			printf("Valid: %c\n", valid);
+				//close(sd);
 		} else {
+			printf("Valid: %c\n", valid);
 			run(sd);
 		}
 	} else {
@@ -147,6 +150,10 @@ void run(int sd) {
 		n = recv(sd, &msgLen, sizeof(uint16_t), MSG_WAITALL);
 		char msg[msgLen];
 		n = recv(sd, &msg, msgLen * sizeof(char), MSG_WAITALL);
+
+		// check if msg ends in newline
+
+		// print msg
 		msg[msgLen] = '\0';
 		printf("%s\n", msg);
 	}
