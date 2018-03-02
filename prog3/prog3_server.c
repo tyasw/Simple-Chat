@@ -32,7 +32,11 @@ int isValidName(char* username);
 int canAffiliate(char* username, TRIE* names, int** parSd);
 void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
 					int* parSds, int* obsSds);
-int processPublicMsg(char* message, int msgLen, char* newLine);
+int processPublicMsg(char* message, int msgLen, char* newLine, char* username);
+
+typedef struct client {
+	char name[10];
+} client_t;
 
 int main(int argc, char** argv) {
 	struct protoent *ptrp;		/* pointer to a protocol table entry */
@@ -45,6 +49,7 @@ int main(int argc, char** argv) {
 	int availPars[255];			// boolean array of available participant sds
 	int activePars[255];		// boolean array of active participants
 	int parAffiliations[255];	// which observer is each participant affiliated with
+	client names[255];			// stores names of clients
 	struct sockaddr_in parAddr;	// temp structure to hold participant's address
 	struct sockaddr_in obsAddr; // temp structure to hold observer's address
 	struct sockaddr_in sParAd;	/* structure to hold server's address and participant */
@@ -245,10 +250,11 @@ int main(int argc, char** argv) {
 				// Verify that username is valid and is not being used already
 				int* val;
 				int valid = canAffiliate(username, names, &val);
-				int parSd = *val;	
 				char response;
 				if (valid) {
-					if (parSd >= 0) {
+					if (val) {
+						int parSd = *val;	
+						assert(parSd >= 0);
 						response = 'Y';
 						n = send(obsSds[i], &response, sizeof(char), MSG_DONTWAIT);
 
@@ -265,10 +271,8 @@ int main(int argc, char** argv) {
 					n = send(obsSds[i], &response, sizeof(char), MSG_DONTWAIT);
 					
 					// disconnect observer
-					close(obsSds[i]);
+					//close(obsSds[i]);
 					availObs[i] = 1;
-					//FD_CLR(obsSds[i], &inSet);
-					//FD_CLR(obsSds[i], &outSet);
 				}
 				setupSelect(&inSet, &outSet, servParSd, servObsSd, parSds, obsSds);
 				activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
@@ -289,19 +293,17 @@ int main(int argc, char** argv) {
 
 						// process message
 
+						// find username associated with sd
+
 						// if private
-						
+
 						// if public
-						char newLine[msgLen + 14];
-						
-						int success = processPublicMsg(message, msgLen, newLine);
-						msgLen += 14;
 
 						// send msg to all applicable observers
 						for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
 							if (availObs[j] == 0) {
 								n = send(obsSds[j], &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
-								n = send(obsSds[j], &newLine, msgLen * sizeof(char), MSG_DONTWAIT);
+								n = send(obsSds[j], &message, msgLen * sizeof(char), MSG_DONTWAIT);
 							}
 						}
 					}
@@ -325,7 +327,7 @@ int main(int argc, char** argv) {
 							activePars[i] = 1;		// Participant is now active
 							printf("Participant is now active.\n");
 
-							// Associate username with parSd and store in trie
+							// Make sure we can get sd given a username 
 							void* userSd = &(parSds[i]);
 							int success = trie_add(names, username, userSd, sizeof(userSd));
 							if (success < 0) {
@@ -480,7 +482,7 @@ void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
  * Prepend characters to a public message so that the sender of the message
  * is identified, and the message looks pretty.
  */
-int processPublicMsg(char* message, int msgLen, char* newLine) {
+int processPublicMsg(char* message, int msgLen, char* newLine, char* username) {
 	int success = 1;
 
 	newLine[0] = '>';
