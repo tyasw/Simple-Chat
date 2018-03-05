@@ -7,6 +7,8 @@
  * application.
  */
 
+#include "trie.h"
+#include "prog3_server.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -19,44 +21,23 @@
 
 #include <assert.h>
 #include <errno.h>
-#include "trie.h"
 
 #define MAX_NUM_PARTICIPANTS 5
 #define MAX_NUM_OBSERVERS 5
 #define QLEN 6
 
-int nextAvailParticipant(int* availPars);
-int nextAvailObserver(int* availObs);
-int isActiveParticipant(int* activePars, int i);
-int isValidName(char* username);
-int canAffiliate(char* username, TRIE* names, int** parSd);
-void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
-					int* parSds, int* obsSds);
-int processPublicMsg(char* message, int msgLen, char* newLine, char* username);
-
-typedef struct client {
-	char name[10];
-} client_t;
 
 int main(int argc, char** argv) {
 	struct protoent *ptrp;		/* pointer to a protocol table entry */
-
-	struct sockaddr_in parAddrs[255];/* structures to hold addresses of participants */
-	struct sockaddr_in obsAddrs[255];/* structures to hold addresses of observers */
-	int obsSds[255];			/* observer socket descriptors */
-	int parSds[255];			/* participant socket descriptors */
-	int availObs[255];			// boolean array of available observer sds
-	int availPars[255];			// boolean array of available participant sds
-	int activePars[255];		// boolean array of active participants
-	int parAffiliations[255];	// which observer is each participant affiliated with
-	client names[255];			// stores names of clients
 	struct sockaddr_in parAddr;	// temp structure to hold participant's address
 	struct sockaddr_in obsAddr; // temp structure to hold observer's address
 	struct sockaddr_in sParAd;	/* structure to hold server's address and participant */
 	struct sockaddr_in sObsAd;	/* structure to hold server's address and observer */
+	participant_t participants[255];	// participant structs
+	observer_t observers[255];			// observer structs
 
-	int servObsSd, servParSd;	/* socket descriptors */
-	int pport, oport;			/* protocol address */
+	int servObsSd, servParSd;	/* socket descriptors for incoming connections */
+	int pport, oport;			/* protocol addresses */
 	int obsALen, parALen;		/* length of addresses */
 	int optval = 1;				/* boolean value when we set socket option */
 	int n;						/* return value of recv */
@@ -66,23 +47,34 @@ int main(int argc, char** argv) {
 	int curNumParticipants = 0;
 	char valid;					// Will we let client join?
 
+	for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
+		participant* p = malloc(sizeof(participant));
+		p->used = 0;
+		p->sd = 0;
+		p->obsSdIndex = -1;
+		memset((char*) &(p->addr), 0, sizeof(struct sockaddr_in)); // clear struct
+		p->addr.sin_family = AF_INET;	// set family to internet
+		p->addr.sin_addr.s_addr = INADDR_ANY;	// set local IP address
+		p->active = 0;
+		participants[i] = (participant_t)p;
+	}
+
+	for (int i = 0; i < MAX_NUM_OBSERVERS; i++) {
+		observer* o = malloc(sizeof(observer));
+		o->used = 0;
+		o->sd = 0;
+		o->parSdIndex = -1;
+		memset((char*) &(o->addr), 0, sizeof(struct sockaddr_in)); // clear struct
+		o->addr.sin_family = AF_INET;	// set family to internet
+		o->addr.sin_addr.s_addr = INADDR_ANY;	// set local IP address
+		observers[i] = (observer_t)o;
+	}
+
 	if( argc != 3 ) {
 		fprintf(stderr,"Error: Wrong number of arguments\n");
 		fprintf(stderr,"usage:\n");
 		fprintf(stderr,"./server participant_port observer_port\n");
 		exit(EXIT_FAILURE);
-	}
-
-	for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
-		memset((char*) &parAddrs[i], 0, sizeof(parAddrs[i])); /* clear struct */
-		parAddrs[i].sin_family = AF_INET;	/* set family to internet */
-		parAddrs[i].sin_addr.s_addr = INADDR_ANY;	/* set local IP address */
-	}
-
-	for (int i = 0; i < MAX_NUM_OBSERVERS; i++) {
-		memset((char*) &obsAddrs[i], 0, sizeof(obsAddrs[i])); /* clear struct */
-		obsAddrs[i].sin_family = AF_INET;	/* set family to internet */
-		obsAddrs[i].sin_addr.s_addr = INADDR_ANY;	/* set local IP address */
 	}
 
 	pport = atoi(argv[1]);
@@ -161,23 +153,14 @@ int main(int argc, char** argv) {
 		exit(EXIT_FAILURE);
 	}
 
-	for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
-		parSds[i] = 0;
-		obsSds[i] = 0;
-		availObs[i] = 1;
-		availPars[i] = 1;
-		activePars[i] = 0;
-		parAffiliations[i] = -1;
-	}
-
-	TRIE* names = trie_new();
+	TRIE* usedNames = trie_new();
 
 	while (1) {
 		// Set up select() for participants and observers
 		fd_set inSet;
 		fd_set outSet;
 
-		setupSelect(&inSet, &outSet, servParSd, servObsSd, parSds, obsSds);
+		setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers);
 		activity = select(FD_SETSIZE, &inSet, &outSet, NULL, NULL);
 		if (activity < 0) {
 			perror("Select:\n");
@@ -192,19 +175,23 @@ int main(int argc, char** argv) {
 			}
 
 			if (curNumParticipants < MAX_NUM_PARTICIPANTS) {	// Continue
-				int nextParSd = nextAvailParticipant(availPars);
-				assert(nextParSd >= 0);
-				availPars[nextParSd] = 0;
-				parSds[nextParSd] = parSd;
-				parAddrs[nextParSd] = parAddr;
+				participant_t nextAvail = NULL;
+				if (nextAvailParticipant(participants, &nextAvail) == 0) {
+					fprintf(stderr, "Error: nextAvailParticipant failed\n");
+				}
+				assert(nextAvail != NULL);
+				participant* p = (participant*)nextAvail;
+				p->used = 1;
+				p->sd = parSd;
+				p->addr = parAddr;
 				valid = 'Y';
-				n = send(parSds[nextParSd], (const void*)&valid, sizeof(char), MSG_DONTWAIT);
+				n = send(p->sd, (const void*)&valid, sizeof(char), MSG_DONTWAIT);
 
-				setupSelect(&inSet, &outSet, servParSd, servObsSd, parSds, obsSds);
+				setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers);
 				activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
 			} else {											// Disconnect
 				valid = 'N';
-				n = send(parSds[curNumParticipants], (const void*)&valid, sizeof(char), MSG_DONTWAIT);
+				n = send(parSd, (const void*)&valid, sizeof(char), MSG_DONTWAIT);
 				printf("No more participants allowed.\n");
 				close(parSd);
 			}
@@ -219,19 +206,23 @@ int main(int argc, char** argv) {
 			}
 
 			if (curNumObservers < MAX_NUM_OBSERVERS) {	// Continue
-				int nextObsSd = nextAvailObserver(availObs);
-				assert(nextObsSd >= 0);
-				availObs[nextObsSd] = 0;
-				obsSds[nextObsSd] = obsSd;
-				obsAddrs[nextObsSd] = obsAddr;
+				observer_t nextAvail = NULL;
+				if (nextAvailObserver(observers, &nextAvail) == 0) {
+					fprintf(stderr, "Error: nextAvailObserver failed\n");
+				}
+				assert(nextAvail != NULL);
+				observer* o = (observer*)nextAvail;
+				o->used = 1;
+				o->sd = obsSd;
+				o->parSdIndex = -1;
+				o->addr = obsAddr;
 				valid = 'Y';
-				n = send(obsSds[nextObsSd], (const void*)&valid, sizeof(char), MSG_DONTWAIT);
-
-				setupSelect(&inSet, &outSet, servParSd, servObsSd, parSds, obsSds);
+				n = send(o->sd, (const void*)&valid, sizeof(char), MSG_DONTWAIT);
+				setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers);
 				activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
 			} else {											// Disconnect
 				valid = 'N';
-				n = send(obsSds[curNumObservers], (const void*)&valid, sizeof(char), MSG_DONTWAIT);
+				n = send(obsSd, (const void*)&valid, sizeof(char), MSG_DONTWAIT);
 				printf("No more observers allowed.\n");
 				close(obsSd);
 			}
@@ -239,79 +230,101 @@ int main(int argc, char** argv) {
 
 		// Someone else is waiting
 		for (int i = 0; i < MAX_NUM_OBSERVERS; i++) {
-			if (FD_ISSET(obsSds[i], &inSet)) {
+			observer_t oType = observers[i];
+			observer* o = (observer*)oType;
+			if (FD_ISSET(o->sd, &inSet)) {
 				uint8_t nameSize;
-				n = recv(obsSds[i], &nameSize, sizeof(uint8_t), MSG_WAITALL);
-				char username[nameSize];			// Temporary holding spot for new user
-				n = recv(obsSds[i], &username, sizeof(username), MSG_WAITALL);
+				n = recv(o->sd, &nameSize, sizeof(uint8_t), MSG_WAITALL);
+				char username[nameSize];			// Temporary holding spot for new username
+				n = recv(o->sd, &username, sizeof(username), MSG_WAITALL);
 				username[nameSize] = '\0';
 				printf("Observer name: %s\n", username);
 
-				// Verify that username is valid and is not being used already
-				int* val;
-				int valid = canAffiliate(username, names, &val);
+				// Verify that username matches an active participant and is not being used already
+				int* val = 0;
+				int valid = canAffiliate(username, usedNames, &val, participants);
 				char response;
 				if (valid) {
 					if (val) {
-						int parSd = *val;	
-						assert(parSd >= 0);
+						int parSdIndex = *val;	
+						assert(parSdIndex >= 0);
 						response = 'Y';
-						n = send(obsSds[i], &response, sizeof(char), MSG_DONTWAIT);
-
-						parAffiliations[parSd] = i;
+						n = send(o->sd, &response, sizeof(char), MSG_DONTWAIT);
+						o->parSdIndex = parSdIndex;
 						curNumObservers++;
+
 						// send msg to all observers saying that a new observer has joined
+						for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
+							char newObsMsg[25] = "A new observer has joined";
+							uint16_t msgLen = sizeof(newObsMsg);
+							observer_t oType = observers[j];
+							observer* o = (observer*) oType;
+							if (o->used == 1) {
+								n = send(o->sd, &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
+								n = send(o->sd, &newObsMsg, msgLen * sizeof(char), MSG_DONTWAIT);
+							}
+						}
 					} else {
 						response = 'T';
-						n = send(obsSds[i], &response, sizeof(char), MSG_DONTWAIT);
+						n = send(o->sd, &response, sizeof(char), MSG_DONTWAIT);
 						// client's timer resets
 					}
 				} else {
 					response = 'N';
-					n = send(obsSds[i], &response, sizeof(char), MSG_DONTWAIT);
+					n = send(o->sd, &response, sizeof(char), MSG_DONTWAIT);
 					
 					// disconnect observer
 					//close(obsSds[i]);
-					availObs[i] = 1;
+					o->used = 0;	// MAYBE?
 				}
-				setupSelect(&inSet, &outSet, servParSd, servObsSd, parSds, obsSds);
+				setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers);
 				activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
 			}
 		}
 
 		for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
-			if (FD_ISSET(parSds[i], &inSet)) {
-				if (isActiveParticipant(activePars, i)) { // get ready to receive msg
+			participant_t pType = participants[i];
+			participant* p = (participant*)pType;
+			if (FD_ISSET(p->sd, &inSet)) {
+				if (isActiveParticipant(participants, i)) { // get ready to receive msg
 					uint16_t msgLen;
-					n = recv(parSds[i], &msgLen, sizeof(uint16_t), MSG_WAITALL);
+					n = recv(p->sd, &msgLen, sizeof(uint16_t), MSG_WAITALL);
 					if (msgLen > 1000) {
 						// disconnect on participant and any affiliated observer
 					} else {
 						char message[msgLen];
-						n = recv(parSds[i], &message, msgLen * sizeof(char), MSG_WAITALL);
+						n = recv(p->sd, &message, msgLen * sizeof(char), MSG_WAITALL);
 						printf("We received a message from %d\n", i);
 
 						// process message
 
 						// find username associated with sd
+						char newLine[msgLen + 14];
+						uint16_t newMsgLen = sizeof(newLine);
 
 						// if private
 
 						// if public
+						int success = processPublicMsg(message, newMsgLen, newLine, p->name);
+						if (!success) {
+							fprintf(stderr, "Error processing public message\n");
+						}
 
 						// send msg to all applicable observers
 						for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
-							if (availObs[j] == 0) {
-								n = send(obsSds[j], &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
-								n = send(obsSds[j], &message, msgLen * sizeof(char), MSG_DONTWAIT);
+							observer_t oType = observers[j];
+							observer* o = (observer*) oType;
+							if (o->used == 1) {
+								n = send(o->sd, &newMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
+								n = send(o->sd, &newLine, newMsgLen * sizeof(char), MSG_DONTWAIT);
 							}
 						}
 					}
 				} else { // negotiating username
 					uint8_t nameSize;
-					n = recv(parSds[i], &nameSize, sizeof(uint8_t), MSG_WAITALL);
+					n = recv(p->sd, &nameSize, sizeof(uint8_t), MSG_WAITALL);
 					char username[nameSize];			// Temporary holding spot for new user
-					n = recv(parSds[i], &username, sizeof(username), MSG_WAITALL);
+					n = recv(p->sd, &username, sizeof(username), MSG_WAITALL);
 					username[nameSize] = '\0';
 					printf("Participant name: %s\n", username);
 
@@ -319,57 +332,66 @@ int main(int argc, char** argv) {
 					int valid = isValidName(username);
 					char response;
 					if (valid) {
-						int isUsed = trie_search(names, username, 0);
+						int isUsed = trie_search(usedNames, username, 0);
 						if (!isUsed) {
 							response = 'Y';
-							n = send(parSds[i], &response, sizeof(char), MSG_DONTWAIT);
+							n = send(p->sd, &response, sizeof(char), MSG_DONTWAIT);
 
-							activePars[i] = 1;		// Participant is now active
+							p->active = 1;
 							printf("Participant is now active.\n");
 
-							// Make sure we can get sd given a username 
-							void* userSd = &(parSds[i]);
-							int success = trie_add(names, username, userSd, sizeof(userSd));
+							// Make sure we can get an index into the participant array given a username 
+							int success = trie_add(usedNames, username, (void*)&i, sizeof(int));
 							if (success < 0) {
 								fprintf(stderr, "Error with adding name to list.\n");
 							}
+							for (int j = 0; j < sizeof(username); j++) {
+								p->name[j] = username[j];
+							}
+							//p->name = username;
 
 							curNumParticipants++;
 							// send msg to all observers
 
 							for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
-								if (availObs[j] == 0) {
+								observer_t oType = observers[i];
+								observer* o = (observer*) oType;
+								if (o->used == 1) {
 									char broadcastMsg[1000];
 									sprintf(broadcastMsg, "User %s has joined.\n", username);
 									uint16_t msgLen = nameSize + 17;
 									broadcastMsg[msgLen] = '\0';
-									n = send(obsSds[j], &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
-									n = send(obsSds[j], &broadcastMsg, msgLen * sizeof(char), MSG_DONTWAIT);
+									n = send(o->sd, &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
+									n = send(o->sd, &broadcastMsg, msgLen * sizeof(char), MSG_DONTWAIT);
 								}
 							}
 						} else {
 							// reset timer
 							response = 'T';
-							n = send(parSds[i], &response, sizeof(char), MSG_DONTWAIT);
+							n = send(p->sd, &response, sizeof(char), MSG_DONTWAIT);
 						}
 					} else {
 						// don't reset timer
 						response = 'I';
-						n = send(parSds[i], &response, sizeof(char), MSG_DONTWAIT);
+						n = send(p->sd, &response, sizeof(char), MSG_DONTWAIT);
 					}
 				}
-				setupSelect(&inSet, &outSet, servParSd, servObsSd, parSds, obsSds);
+				setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers);
 				activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
 			}
 		}
 
 		for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
-			if (FD_ISSET(parSds[i], &outSet)) {
+			participant_t pType = participants[i];
+			participant* p = (participant*)pType;
+			if (FD_ISSET(p->sd, &outSet)) {
 			}
 		}
 
 		for (int i = 0; i < MAX_NUM_OBSERVERS; i++) {
-			if (FD_ISSET(obsSds[i], &outSet)) {
+			observer_t oType = observers[i];
+			observer* o = (observer*)oType;
+			if (FD_ISSET(o->sd, &outSet)) {
 			}
 		}
 /*
@@ -383,55 +405,55 @@ int main(int argc, char** argv) {
 
 /* nextAvailParticipant
  *
- * Returns the next available socket descriptor for a participant.
  */
-int nextAvailParticipant(int* availPars) {
-	int nextAvailable = -1;
+int nextAvailParticipant(participant_t* participants, participant_t* nextAvail) {
 	int i = 0;
-	while (i < MAX_NUM_PARTICIPANTS && availPars[i] == 0) {
+
+	participant_t pType = participants[i];
+	participant* p = (participant*)pType;
+	while (i < MAX_NUM_PARTICIPANTS && p->used == 1) {
 		i++;
+		pType = participants[i];
+		p = (participant*)pType;
 	}
 	
 	if (i < MAX_NUM_PARTICIPANTS) {
-		nextAvailable = i;
+		*nextAvail = (participant_t)p;
 	}
-	return nextAvailable;
+	return 1;
 }
 
 /* nextAvailObserver
  *
- * Returns the next available socket descriptor for an observer.
  */
-int nextAvailObserver(int* availObs) {
-	int nextAvailable = -1;
+int nextAvailObserver(observer_t* observers, observer_t* nextAvail) {
 	int i = 0;
-	while (i < MAX_NUM_OBSERVERS && availObs[i] == -1) {
+
+	observer_t oType = observers[i];
+	observer* o = (observer*)oType;
+	while (i < MAX_NUM_OBSERVERS && o->used == 1) {
 		i++;
+		oType = observers[i];
+		o = (observer*)oType;
 	}
 	
 	if (i < MAX_NUM_OBSERVERS) {
-		nextAvailable = i;
+		*nextAvail = (observer_t)o;
 	}
-	return nextAvailable;
+	return 1;
 }
 
 /* isActiveParticipant
  *
- * Checks to see if the participant is active or not.
  */
-int isActiveParticipant(int* activePars, int i) {
-	int isActive = 0;
-	if (activePars[i] == 1) {
-		isActive = 1;
-	}
-	return isActive;
+int isActiveParticipant(participant_t* participants, int i) {
+	participant_t pType = participants[i];
+	participant* p = (participant*)pType;
+	return p->active;
 }
 
 /* isValidName
  *
- * Checks if name includes only valid characters, and if the name is unique.
- * Valid characters are upper-case letters, lower-case letters, numbers, and
- * underscores. Whitespace is not allowed.
  */
 int isValidName(char* username) {
 	int valid = 1;
@@ -450,50 +472,81 @@ int isValidName(char* username) {
 
 /* canAffiliate
  *
- * Checks if observer can affiliate with participant given username. If they
- * can, parSd points to the index in parSds of the participant.
  */
-int canAffiliate(char* username, TRIE* names, int** parSd) {
+int canAffiliate(char* username, TRIE* names, int** parSd, participant_t* participants) {
 	int canAffiliate = trie_search(names, username, (void**)parSd);
+
+	// Use **parSd to find participant struct
+	if (canAffiliate) {
+		participant_t pType = participants[**parSd];
+		participant* p = (participant*) pType;
+		if (p->obsSdIndex < 0) {	// Not affiliated yet, can use
+			canAffiliate = 1;
+			p->obsSdIndex = **parSd;
+		} else {
+			canAffiliate = 0;
+		}
+	}
+
 	return canAffiliate;
 }
 
 /* setupSelect
  *
- * Reset the file descriptors we want select to monitor
  */
 void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
-					int* parSds, int* obsSds) {
+					participant_t* participants, observer_t* observers) {
 	FD_ZERO(inSet);
 	FD_ZERO(outSet);
 
 	FD_SET(servParSd, inSet);
 	FD_SET(servObsSd, inSet);
 	for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
-		FD_SET(parSds[i], inSet);
-		FD_SET(parSds[i], outSet);
-		FD_SET(obsSds[i], inSet);
-		FD_SET(obsSds[i], outSet);
+		participant_t pType = participants[i];
+		participant* p = (participant*)pType;
+		observer_t oType = observers[i];
+		observer* o = (observer*)oType;
+		FD_SET(p->sd, inSet);
+		FD_SET(p->sd, outSet);
+		FD_SET(o->sd, inSet);
+		FD_SET(o->sd, outSet);
 	}
 }
 
 /* processPublicMsg
  *
- * Prepend characters to a public message so that the sender of the message
- * is identified, and the message looks pretty.
  */
-int processPublicMsg(char* message, int msgLen, char* newLine, char* username) {
+int processPublicMsg(char* message, uint16_t newMsgLen, char* formattedMsg, char* username) {
 	int success = 1;
+	int i = 0;
 
-	newLine[0] = '>';
-	
+	formattedMsg[i] = '>';
+
 	// variable number of spaces (11 - len(username))
+	for (i = 1; i < (11 - sizeof(username) + 1); i++) {
+		formattedMsg[i] = ' ';
+	}
 
 	// username
+	int j = 0;
+	for (; i < 11; i++) {
+		formattedMsg[i] = username[j];
+		j++;
+	}
 
-	//colon
+	// colon
+	formattedMsg[i] = ':';
+	i++;
+	// space	
+	formattedMsg[i] = ' ';
+	i++;
 
-	//space	
+	// message
+	j = 0;
+	for (; i < newMsgLen; i++) {
+		formattedMsg[i] = message[j];
+		j++;
+	}
 
 	return success;
 }
