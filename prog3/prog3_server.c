@@ -251,6 +251,7 @@ int main(int argc, char** argv) {
 						response = 'Y';
 						n = send(o->sd, &response, sizeof(char), MSG_DONTWAIT);
 						o->parSdIndex = parSdIndex;
+						o->used = 1;
 						curNumObservers++;
 
 						// send msg to all observers saying that a new observer has joined
@@ -296,27 +297,48 @@ int main(int argc, char** argv) {
 						n = recv(p->sd, &message, msgLen * sizeof(char), MSG_WAITALL);
 						printf("We received a message from %d\n", i);
 
-						// process message
+						int isPrivate, isActive;
+						//char formattedMsg[msgLen + 14];
+						processMsg(message, formattedMsg, formattedMsgLen, participants, names, p->name, &isActive, &isPrivate);
+						if (!isActive) {
+							uint16_t warningLen;
+							char warning[41];
 
-						// find username associated with sd
-						char newLine[msgLen + 14];
-						uint16_t newMsgLen = sizeof(newLine);
+							// send warning message
+						} else if (isPrivate) {
+							// send to observer of recipient and observer of sender
+							int recipientObserverSd, senderObserverSd;
+							getPrivateMsgDestination(observers, participants, recipientName, senderName, names, &recipientObserverSd, &senderObserverSd);
 
-						// if private
 
-						// if public
-						int success = processPublicMsg(message, newMsgLen, newLine, p->name);
-						if (!success) {
-							fprintf(stderr, "Error processing public message\n");
-						}
+							// look up sd of observer of recipient
+							int canAffiliate = trie_search(names, username, (void**)parSd);
+							
+							observer_t oType = observers[p->obsSdIndex];
+							observer* o = (observer*)oType;
+							send(recipientObserverSd, &newMsgLen, sizeof(uint16_t), MSG_DONTWAIT); // recipient
+							send(senderObserverSd, &newMsgLen, sizeof(uint16_t), MSG_DONTWAIT); // sender
+						} else {
+							message[msgLen] = '\0';
+							char newLine[msgLen + 14];
+							uint16_t newMsgLen = sizeof(newLine);
 
-						// send msg to all applicable observers
-						for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
-							observer_t oType = observers[j];
-							observer* o = (observer*) oType;
-							if (o->used == 1) {
-								n = send(o->sd, &newMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
-								n = send(o->sd, &newLine, newMsgLen * sizeof(char), MSG_DONTWAIT);
+							// if private
+
+							// if public
+							int success = processPublicMsg(message, newMsgLen, newLine, p->name);
+							if (!success) {
+								fprintf(stderr, "Error processing public message\n");
+							}
+
+							// send msg to all applicable observers
+							for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
+								observer_t oType = observers[j];
+								observer* o = (observer*) oType;
+								if (o->used == 1) {
+									n = send(o->sd, &newMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
+									n = send(o->sd, &newLine, newMsgLen * sizeof(char), MSG_DONTWAIT);
+								}
 							}
 						}
 					}
@@ -354,10 +376,10 @@ int main(int argc, char** argv) {
 							// send msg to all observers
 
 							for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
-								observer_t oType = observers[i];
+								observer_t oType = observers[j];
 								observer* o = (observer*) oType;
 								if (o->used == 1) {
-									char broadcastMsg[1000];
+									char broadcastMsg[28];
 									sprintf(broadcastMsg, "User %s has joined.\n", username);
 									uint16_t msgLen = nameSize + 17;
 									broadcastMsg[msgLen] = '\0';
@@ -513,40 +535,70 @@ void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
 	}
 }
 
+/* processMsg
+ *
+ */
+void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participant_t* participants, TRIE* names, char* username, int* isActive, int* isPrivate) {
+	*isActive = 0;
+	*isPrivate = 0;
+	if (message[0] == '@') {		// private message
+		*isPrivate = 1;
+
+		// Check if active
+		int** parSd;
+		int found = trie_search(names, username, (void**)parSd);
+		if (found) {
+			participant_t pType = participants[**parSd];
+			participant* p = (participant*)pType;
+			if (p->active) {
+				*isActive = 1;
+			}
+
+			// process
+		}
+	} else {
+		int i = 0;
+		formattedMsg[i] = '>';
+
+		// variable number of spaces (11 - strlen(username))
+		for (i = 1; i < (11 - strlen(username) + 1); i++) {
+			formattedMsg[i] = ' ';
+		}
+
+		// username
+		int j = 0;
+		for (; i < 12; i++) {
+			formattedMsg[i] = username[j];
+			j++;
+		}
+
+		formattedMsg[i] = ':';
+		i++;
+		formattedMsg[i] = ' ';
+		i++;
+
+		// message
+		j = 0;
+		for (; i < newMsgLen; i++) {
+			formattedMsg[i] = message[j];
+			j++;
+		}
+
+		formattedMsg[newMsgLen] = '\0';
+	}
+}
+
 /* processPublicMsg
  *
  */
 int processPublicMsg(char* message, uint16_t newMsgLen, char* formattedMsg, char* username) {
-	int success = 1;
-	int i = 0;
-
-	formattedMsg[i] = '>';
-
-	// variable number of spaces (11 - len(username))
-	for (i = 1; i < (11 - sizeof(username) + 1); i++) {
-		formattedMsg[i] = ' ';
-	}
-
-	// username
-	int j = 0;
-	for (; i < 11; i++) {
-		formattedMsg[i] = username[j];
-		j++;
-	}
-
-	// colon
-	formattedMsg[i] = ':';
-	i++;
-	// space	
-	formattedMsg[i] = ' ';
-	i++;
-
-	// message
-	j = 0;
-	for (; i < newMsgLen; i++) {
-		formattedMsg[i] = message[j];
-		j++;
-	}
 
 	return success;
+}
+
+/* getPrivateMsgDestination
+ *
+ */
+void getPrivateMsgDestination(observer_t* observers, participant_t* participants, char* recipientName, char* senderName, TRIE* names, int* recipientObserverSd, int* senderObserverSd) {
+
 }

@@ -80,7 +80,36 @@ void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
 
 /* processPublicMsg
  *
+ * message				The message a participant sent the server
+ * newMsgLen			length of the formatted message
+ * formattedMsg			The formatted message we will send
+ * username				Who sent us the message
+ *
  * Prepend characters to a public message so that the sender of the message
  * is identified, and the message looks pretty.
  */
 int processPublicMsg(char* message, uint16_t newMsgLen, char* formattedMsg, char* username);
+
+/* processMsg
+ *
+ * Process a message sent by a participant. First, check if the recipient is
+ * private. Set isPrivate if it is. Then, check if the recipient is active, and
+ * set isActive accordingly. Finally, format the message so that it looks pretty.
+ */
+void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participant_t* participants, TRIE* names, char* username, int* isActive, int* isPrivate);
+
+
+/* getPrivateMsgDestination
+ *
+ * observers				The list of observers
+ * participants				The list of participants
+ * recipientName			The name of the participant the message is intended for
+ * senderName				Which participant sent the private message
+ * names					The list of participant names
+ * recipientObserverSd		A pointer to the socket descriptor of the observer watching the recipient
+ * senderObserverSd			pointer to the socket descriptor of the observer watching the sender
+ *
+ * Get the socket desciptors of the observers we want to send a private message
+ * to. If the recipient is valid, both 
+ */
+void getPrivateMsgDestination(observer_t* observers, participant_t* participants, char* recipientName, char* senderName, TRIE* names, int* recipientObserverSd, int* senderObserverSd);
