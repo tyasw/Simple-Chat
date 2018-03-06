@@ -96,7 +96,7 @@ int processPublicMsg(char* message, uint16_t newMsgLen, char* formattedMsg, char
  * private. Set isPrivate if it is. Then, check if the recipient is active, and
  * set isActive accordingly. Finally, format the message so that it looks pretty.
  */
-void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participant_t* participants, TRIE* names, char* username, int* isActive, int* isPrivate);
+void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participant_t* participants, TRIE* names, char* sender, char* recipient, int* isActive, int* isPrivate);
 
 
 /* getPrivateMsgDestination
@@ -112,4 +112,14 @@ void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participa
  * Get the socket desciptors of the observers we want to send a private message
  * to. If the recipient is valid, both 
  */
-void getPrivateMsgDestination(observer_t* observers, participant_t* participants, char* recipientName, char* senderName, TRIE* names, int* recipientObserverSd, int* senderObserverSd);
+void getPrivateMsgDestination(observer_t* observers, participant_t* participants, char* senderName, char* recipientName, TRIE* names, int* recipientObserverSd, int* senderObserverSd);
+
+/* isPrivateMsg
+ *
+ * message				The message
+ * recipientLen			Pointer to the length of the recipient's name
+ *
+ * Checks if a message is private. It returns the length of the name of the
+ * recipient of the message.
+ */
+int isPrivateMsg(char* message, int* recipientLen);

@@ -3,8 +3,7 @@
  * 2/22/18
  * William Tyas
  *
- * Description: This is the server source code file for a simple chat
- * application.
+ * Description: the server for a simple chat application.
  */
 
 #include "trie.h"
@@ -298,46 +297,37 @@ int main(int argc, char** argv) {
 						printf("We received a message from %d\n", i);
 
 						int isPrivate, isActive;
-						//char formattedMsg[msgLen + 14];
-						processMsg(message, formattedMsg, formattedMsgLen, participants, names, p->name, &isActive, &isPrivate);
-						if (!isActive) {
-							uint16_t warningLen;
-							char warning[41];
 
-							// send warning message
-						} else if (isPrivate) {
-							// send to observer of recipient and observer of sender
-							int recipientObserverSd, senderObserverSd;
-							getPrivateMsgDestination(observers, participants, recipientName, senderName, names, &recipientObserverSd, &senderObserverSd);
-
-
-							// look up sd of observer of recipient
-							int canAffiliate = trie_search(names, username, (void**)parSd);
-							
-							observer_t oType = observers[p->obsSdIndex];
-							observer* o = (observer*)oType;
-							send(recipientObserverSd, &newMsgLen, sizeof(uint16_t), MSG_DONTWAIT); // recipient
-							send(senderObserverSd, &newMsgLen, sizeof(uint16_t), MSG_DONTWAIT); // sender
-						} else {
-							message[msgLen] = '\0';
-							char newLine[msgLen + 14];
-							uint16_t newMsgLen = sizeof(newLine);
-
-							// if private
-
-							// if public
-							int success = processPublicMsg(message, newMsgLen, newLine, p->name);
-							if (!success) {
-								fprintf(stderr, "Error processing public message\n");
+						int recipientLen;
+						isPrivate = isPrivateMsg(message, &recipientLen);
+						message[msgLen] = '\0';
+						if (isPrivate) {
+							char recipient[recipientLen];
+							char formattedMsg[msgLen + 14 - (recipientLen + 2)];
+							uint16_t fMsgLen = sizeof(formattedMsg);
+							processMsg(message, formattedMsg, fMsgLen, participants, usedNames, p->name, recipient, &isActive, &isPrivate);
+							if (!isActive) {
+								uint16_t warningLen;
+								char warning[41];
+								// send warning message
+							} else {
+								int recipientSd, senderSd;
+								getPrivateMsgDestination(observers, participants, p->name, recipient, usedNames, &recipientSd, &senderSd);
+								n = send(recipientSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT); // recipient
+								n = send(senderSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT); // sender
+								n = send(recipientSd, &formattedMsg, fMsgLen * sizeof(char), MSG_DONTWAIT);
+								n = send(senderSd, &formattedMsg, fMsgLen * sizeof(char), MSG_DONTWAIT);
 							}
-
-							// send msg to all applicable observers
+						} else {
+							char formattedMsg[msgLen + 14];
+							uint16_t fMsgLen = sizeof(formattedMsg);
+							processMsg(message, formattedMsg, fMsgLen, participants, usedNames, p->name, 0, &isActive, &isPrivate);
 							for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
 								observer_t oType = observers[j];
 								observer* o = (observer*) oType;
 								if (o->used == 1) {
-									n = send(o->sd, &newMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
-									n = send(o->sd, &newLine, newMsgLen * sizeof(char), MSG_DONTWAIT);
+									n = send(o->sd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
+									n = send(o->sd, &formattedMsg, fMsgLen * sizeof(char), MSG_DONTWAIT);
 								}
 							}
 						}
@@ -370,7 +360,6 @@ int main(int argc, char** argv) {
 							for (int j = 0; j < sizeof(username); j++) {
 								p->name[j] = username[j];
 							}
-							//p->name = username;
 
 							curNumParticipants++;
 							// send msg to all observers
@@ -538,37 +527,69 @@ void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
 /* processMsg
  *
  */
-void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participant_t* participants, TRIE* names, char* username, int* isActive, int* isPrivate) {
+void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participant_t* participants, TRIE* names, char* sender, char* recipient, int* isActive, int* isPrivate) {
 	*isActive = 0;
 	*isPrivate = 0;
 	if (message[0] == '@') {		// private message
 		*isPrivate = 1;
+		int i = 1;
+		while (message[i] != ' ') {
+			recipient[i-1] = message[i];	
+			i++;
+		}
+		recipient[i-1] = '\0';
 
 		// Check if active
-		int** parSd;
-		int found = trie_search(names, username, (void**)parSd);
+		int* parSd = 0;
+		int found = trie_search(names, recipient, (void**)&parSd);
 		if (found) {
-			participant_t pType = participants[**parSd];
+			participant_t pType = participants[*parSd];
 			participant* p = (participant*)pType;
 			if (p->active) {
 				*isActive = 1;
-			}
+				i = 0;
+				formattedMsg[i] = '-';
 
-			// process
+				// variable number of spaces (11 - strlen(sender))
+				for (i = 1; i < (11 - strlen(sender) + 1); i++) {
+					formattedMsg[i] = ' ';
+				}
+
+				// sender
+				int j = 0;
+				for (; i < 12; i++) {
+					formattedMsg[i] = sender[j];
+					j++;
+				}
+
+				formattedMsg[i] = ':';
+				i++;
+				formattedMsg[i] = ' ';
+				i++;
+
+				// message
+				j = sizeof(recipient) + 1;
+				for (; i < newMsgLen; i++) {
+					formattedMsg[i] = message[j];
+					j++;
+				}
+
+				formattedMsg[newMsgLen] = '\0';
+			}
 		}
 	} else {
 		int i = 0;
 		formattedMsg[i] = '>';
 
-		// variable number of spaces (11 - strlen(username))
-		for (i = 1; i < (11 - strlen(username) + 1); i++) {
+		// variable number of spaces (11 - strlen(sender))
+		for (i = 1; i < (11 - strlen(sender) + 1); i++) {
 			formattedMsg[i] = ' ';
 		}
 
-		// username
+		// sender
 		int j = 0;
 		for (; i < 12; i++) {
-			formattedMsg[i] = username[j];
+			formattedMsg[i] = sender[j];
 			j++;
 		}
 
@@ -588,17 +609,37 @@ void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participa
 	}
 }
 
-/* processPublicMsg
- *
- */
-int processPublicMsg(char* message, uint16_t newMsgLen, char* formattedMsg, char* username) {
-
-	return success;
-}
-
 /* getPrivateMsgDestination
  *
  */
-void getPrivateMsgDestination(observer_t* observers, participant_t* participants, char* recipientName, char* senderName, TRIE* names, int* recipientObserverSd, int* senderObserverSd) {
+void getPrivateMsgDestination(observer_t* observers, participant_t* participants, char* senderName, char* recipientName, TRIE* names, int* recipientSd, int* senderSd) {
+	int* parSd = 0;
+	trie_search(names, senderName, (void**)&parSd);
+	participant_t pType = participants[*parSd];
+	participant* p = (participant*)pType;
+	observer_t oType = observers[p->obsSdIndex];
+	observer* o = (observer*)oType;
+	*senderSd = o->sd;
 
+	trie_search(names, recipientName, (void**)&parSd);
+	pType = participants[*parSd];
+	p = (participant*)pType;
+	oType = observers[p->obsSdIndex];
+	o = (observer*)oType;
+	*recipientSd = o->sd;
+}
+
+int isPrivateMsg(char* message, int* recipientLen) {
+	int isPrivate = 0;
+	int nameLen = 0;
+	if (message[0] == '@') {
+		isPrivate = 1;
+		int i = 1;
+		while (message[i] != ' ') {
+			nameLen++;
+			i++;
+		}
+	}
+	*recipientLen = nameLen;
+	return (message[0] == '@');
 }
