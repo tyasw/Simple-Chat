@@ -31,6 +31,10 @@ typedef struct participant* participant_t;
 
 typedef struct observerSpot {
 	int used;					// is spot being used?
+	int affiliated;				/* is affiliated with a participant yet? Won't
+								 * be in the time between observer connecting
+								 * and entering participant name
+								 */
 	int sd;						// observer's socket descriptor
 	int parSdIndex;				// index of participant observer is watching
 	struct sockaddr_in addr;	// address
@@ -69,7 +73,7 @@ int isValidName(char* username);
  * Checks if observer can affiliate with participant given username. If they
  * can, parSd points to the index in parSds of the participant.
  */
-int canAffiliate(char* username, TRIE* names, int** parSd, participant_t* participants);
+int canAffiliate(char* username, TRIE* names, int** parSd, int* isAvailable, participant_t* participants, int obsSdIndex);
 
 /* setupSelect
  *
@@ -123,3 +127,13 @@ void getPrivateMsgDestination(observer_t* observers, participant_t* participants
  * recipient of the message.
  */
 int isPrivateMsg(char* message, int* recipientLen);
+
+/* cleanupObserver
+ *
+ */
+void cleanupObserver(observer* o, participant_t* participants);
+
+/* cleanupParticipant
+ *
+ */
+void cleanupParticipant(participant* p, observer_t* observers, TRIE* usedNames);

@@ -97,6 +97,10 @@ int main( int argc, char **argv) {
 		send(sd, &username, nameLen * sizeof(char), 0);
 
 		n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
+		if (n == 0) {
+			close(sd);
+			exit(EXIT_FAILURE);
+		}
 		while (valid != 'Y') {
 			if (valid == 'T') {
 				// timer is reset; try again
@@ -106,6 +110,10 @@ int main( int argc, char **argv) {
 				send(sd, &nameLen, sizeof(uint8_t), 0);
 				send(sd, &username, nameLen * sizeof(char), 0);
 				n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
+				if (n == 0) {
+					close(sd);
+					exit(EXIT_FAILURE);
+				}
 			} else if (valid == 'I') {
 				// try again, timer not reset
 				printf("%s is an invalid name. Please try again.\n", username);
@@ -114,6 +122,10 @@ int main( int argc, char **argv) {
 				send(sd, &nameLen, sizeof(uint8_t), 0);
 				send(sd, &username, nameLen * sizeof(char), 0);
 				n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
+				if (n == 0) {
+					close(sd);
+					exit(EXIT_FAILURE);
+				}
 			}
 		}
 		run(sd);

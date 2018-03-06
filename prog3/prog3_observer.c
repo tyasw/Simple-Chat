@@ -85,6 +85,10 @@ int main( int argc, char **argv) {
 	}
 
 	n = recv(sd, &valid, sizeof(char), MSG_WAITALL);	
+	if (n == 0) {
+		close(sd);
+		exit(EXIT_FAILURE);
+	}
 
 	if (valid == 'Y') {
 		char username[MAX_WORD_LEN + 2];	// max length + newline + null
@@ -95,6 +99,10 @@ int main( int argc, char **argv) {
 		send(sd, &username, nameLen * sizeof(char), 0);
 
 		n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
+		if (n == 0) {
+			close(sd);
+			exit(EXIT_FAILURE);
+		}
 		while (valid != 'Y' && valid != 'N') {
 			printf("Valid: %c\n", valid);
 			getUserName(username);
@@ -102,6 +110,10 @@ int main( int argc, char **argv) {
 			send(sd, &nameLen, sizeof(uint8_t), 0);
 			send(sd, &username, nameLen * sizeof(char), 0);
 			n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
+			if (n == 0) {
+				close(sd);
+				exit(EXIT_FAILURE);
+			}
 		}
 		if (valid == 'N') {
 			printf("Valid: %c\n", valid);
@@ -148,8 +160,16 @@ void run(int sd) {
 		uint16_t msgLen;
 		int n;
 		n = recv(sd, &msgLen, sizeof(uint16_t), MSG_WAITALL);
+		if (n == 0) {
+			close(sd);
+			exit(EXIT_FAILURE);
+		}
 		char msg[msgLen];
 		n = recv(sd, &msg, msgLen * sizeof(char), MSG_WAITALL);
+		if (n == 0) {
+			close(sd);
+			exit(EXIT_FAILURE);
+		}
 
 		// check if msg ends in newline
 

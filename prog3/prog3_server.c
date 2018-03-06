@@ -20,11 +20,11 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <signal.h>
 
 #define MAX_NUM_PARTICIPANTS 5
 #define MAX_NUM_OBSERVERS 5
 #define QLEN 6
-
 
 int main(int argc, char** argv) {
 	struct protoent *ptrp;		/* pointer to a protocol table entry */
@@ -32,8 +32,6 @@ int main(int argc, char** argv) {
 	struct sockaddr_in obsAddr; // temp structure to hold observer's address
 	struct sockaddr_in sParAd;	/* structure to hold server's address and participant */
 	struct sockaddr_in sObsAd;	/* structure to hold server's address and observer */
-	participant_t participants[255];	// participant structs
-	observer_t observers[255];			// observer structs
 
 	int servObsSd, servParSd;	/* socket descriptors for incoming connections */
 	int pport, oport;			/* protocol addresses */
@@ -41,6 +39,8 @@ int main(int argc, char** argv) {
 	int optval = 1;				/* boolean value when we set socket option */
 	int n;						/* return value of recv */
 
+	participant_t participants[255];		// participant structs
+	observer_t observers[255];				// observer structs
 	int activity;				/* return value of select() */
 	int curNumObservers = 0;
 	int curNumParticipants = 0;
@@ -156,6 +156,7 @@ int main(int argc, char** argv) {
 
 	while (1) {
 		// Set up select() for participants and observers
+		signal(SIGPIPE, SIG_IGN);		// SIGPIPE generated when a client closes
 		fd_set inSet;
 		fd_set outSet;
 
@@ -191,7 +192,6 @@ int main(int argc, char** argv) {
 			} else {											// Disconnect
 				valid = 'N';
 				n = send(parSd, (const void*)&valid, sizeof(char), MSG_DONTWAIT);
-				printf("No more participants allowed.\n");
 				close(parSd);
 			}
 		}
@@ -211,6 +211,7 @@ int main(int argc, char** argv) {
 				}
 				assert(nextAvail != NULL);
 				observer* o = (observer*)nextAvail;
+				o->affiliated = 0;
 				o->used = 1;
 				o->sd = obsSd;
 				o->parSdIndex = -1;
@@ -222,7 +223,6 @@ int main(int argc, char** argv) {
 			} else {											// Disconnect
 				valid = 'N';
 				n = send(obsSd, (const void*)&valid, sizeof(char), MSG_DONTWAIT);
-				printf("No more observers allowed.\n");
 				close(obsSd);
 			}
 		}
@@ -234,23 +234,28 @@ int main(int argc, char** argv) {
 			if (FD_ISSET(o->sd, &inSet)) {
 				uint8_t nameSize;
 				n = recv(o->sd, &nameSize, sizeof(uint8_t), MSG_WAITALL);
+				if (n == 0) {
+					cleanupObserver(o, participants);
+				}
 				char username[nameSize];			// Temporary holding spot for new username
 				n = recv(o->sd, &username, sizeof(username), MSG_WAITALL);
+				if (n == 0) {
+					cleanupObserver(o, participants);
+				}
 				username[nameSize] = '\0';
-				printf("Observer name: %s\n", username);
 
 				// Verify that username matches an active participant and is not being used already
-				int* val = 0;
-				int valid = canAffiliate(username, usedNames, &val, participants);
+				int* parSdIndex = 0;
+				int isAvailable = 0;
+				int used = canAffiliate(username, usedNames, &parSdIndex, &isAvailable, participants, i);
 				char response;
-				if (valid) {
-					if (val) {
-						int parSdIndex = *val;	
-						assert(parSdIndex >= 0);
+				if (!used) {
+					if (isAvailable) {
+						o->affiliated = 1;
+						assert(*parSdIndex >= 0);
 						response = 'Y';
 						n = send(o->sd, &response, sizeof(char), MSG_DONTWAIT);
-						o->parSdIndex = parSdIndex;
-						o->used = 1;
+						o->parSdIndex = *parSdIndex;
 						curNumObservers++;
 
 						// send msg to all observers saying that a new observer has joined
@@ -264,6 +269,7 @@ int main(int argc, char** argv) {
 								n = send(o->sd, &newObsMsg, msgLen * sizeof(char), MSG_DONTWAIT);
 							}
 						}
+						o->used = 1;
 					} else {
 						response = 'T';
 						n = send(o->sd, &response, sizeof(char), MSG_DONTWAIT);
@@ -289,12 +295,14 @@ int main(int argc, char** argv) {
 				if (isActiveParticipant(participants, i)) { // get ready to receive msg
 					uint16_t msgLen;
 					n = recv(p->sd, &msgLen, sizeof(uint16_t), MSG_WAITALL);
-					if (msgLen > 1000) {
+					if (n == 0) {
+						cleanupParticipant(p, observers, usedNames);
+					} else if (msgLen > 1000) {
 						// disconnect on participant and any affiliated observer
+						cleanupParticipant(p, observers, usedNames);
 					} else {
 						char message[msgLen];
 						n = recv(p->sd, &message, msgLen * sizeof(char), MSG_WAITALL);
-						printf("We received a message from %d\n", i);
 
 						int isPrivate, isActive;
 
@@ -338,7 +346,6 @@ int main(int argc, char** argv) {
 					char username[nameSize];			// Temporary holding spot for new user
 					n = recv(p->sd, &username, sizeof(username), MSG_WAITALL);
 					username[nameSize] = '\0';
-					printf("Participant name: %s\n", username);
 
 					// Verify that username is valid and is not being used already
 					int valid = isValidName(username);
@@ -348,9 +355,7 @@ int main(int argc, char** argv) {
 						if (!isUsed) {
 							response = 'Y';
 							n = send(p->sd, &response, sizeof(char), MSG_DONTWAIT);
-
 							p->active = 1;
-							printf("Participant is now active.\n");
 
 							// Make sure we can get an index into the participant array given a username 
 							int success = trie_add(usedNames, username, (void*)&i, sizeof(int));
@@ -367,7 +372,7 @@ int main(int argc, char** argv) {
 							for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
 								observer_t oType = observers[j];
 								observer* o = (observer*) oType;
-								if (o->used == 1) {
+								if (o->affiliated == 1) {
 									char broadcastMsg[28];
 									sprintf(broadcastMsg, "User %s has joined.\n", username);
 									uint16_t msgLen = nameSize + 17;
@@ -419,7 +424,6 @@ int main(int argc, char** argv) {
  */
 int nextAvailParticipant(participant_t* participants, participant_t* nextAvail) {
 	int i = 0;
-
 	participant_t pType = participants[i];
 	participant* p = (participant*)pType;
 	while (i < MAX_NUM_PARTICIPANTS && p->used == 1) {
@@ -484,22 +488,22 @@ int isValidName(char* username) {
 /* canAffiliate
  *
  */
-int canAffiliate(char* username, TRIE* names, int** parSd, participant_t* participants) {
-	int canAffiliate = trie_search(names, username, (void**)parSd);
+int canAffiliate(char* username, TRIE* names, int** parSd, int* isAvailable, participant_t* participants, int obsSdIndex) {
+	int found = trie_search(names, username, (void**)parSd);
 
 	// Use **parSd to find participant struct
-	if (canAffiliate) {
+	if (found) {
 		participant_t pType = participants[**parSd];
 		participant* p = (participant*) pType;
-		if (p->obsSdIndex < 0) {	// Not affiliated yet, can use
-			canAffiliate = 1;
-			p->obsSdIndex = **parSd;
+		if (p->obsSdIndex < 0 && p->active) {	// Not affiliated yet, can use
+			*isAvailable = 1;
+			p->obsSdIndex = obsSdIndex;
 		} else {
-			canAffiliate = 0;
+			*isAvailable = 0;
 		}
 	}
 
-	return canAffiliate;
+	return !found;
 }
 
 /* setupSelect
@@ -568,7 +572,7 @@ void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participa
 				i++;
 
 				// message
-				j = sizeof(recipient) + 1;
+				j = strlen(recipient) + 2;
 				for (; i < newMsgLen; i++) {
 					formattedMsg[i] = message[j];
 					j++;
@@ -642,4 +646,55 @@ int isPrivateMsg(char* message, int* recipientLen) {
 	}
 	*recipientLen = nameLen;
 	return (message[0] == '@');
+}
+
+void cleanupObserver(observer* o, participant_t* participants) {
+	close(o->sd);
+	o->affiliated = 0;
+	o->used = 0;
+	o->sd = 0;
+
+	// if affiliated with active participant, make available
+	if (o->parSdIndex >= 0) {
+		participant_t pType = participants[o->parSdIndex];
+		participant* p = (participant*)pType;
+		if (p->active) {
+			p->obsSdIndex = -1;
+		}
+		o->parSdIndex = -1;
+	}
+}
+
+void cleanupParticipant(participant* p, observer_t* observers, TRIE* usedNames) {
+	close(p->sd);
+	p->used = 0;
+	p->sd = 0; 
+
+	if (p->obsSdIndex >= 0) {
+		observer_t oType = observers[p->obsSdIndex];
+		observer* o = (observer*)oType;
+		
+		// disconnect observer
+		close(o->sd);
+		o->affiliated = 0;
+		o->used = 0;
+		o->sd = 0;
+		o->parSdIndex = -1;
+		p->obsSdIndex = -1;
+	}
+	p->active = 0;
+	trie_del(usedNames, p->name);
+
+	// send msg to all observers saying that a new observer has joined
+	for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
+		char leftMsg[14 + strlen(p->name)];
+		sprintf(leftMsg, "User %s has left\n", p->name);
+		int msgLen = sizeof(leftMsg);
+		observer_t oType = observers[j];
+		observer* o = (observer*) oType;
+		if (o->used == 1) {
+			send(o->sd, &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
+			send(o->sd, &leftMsg, msgLen * sizeof(char), MSG_DONTWAIT);
+		}
+	}
 }
