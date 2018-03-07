@@ -262,12 +262,12 @@ int main(int argc, char** argv) {
 						// send msg to all observers saying that a new observer has joined
 						for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
 							char newObsMsg[26] = "A new observer has joined\n";
-							uint16_t msgLen = htons(sizeof(newObsMsg));
+							uint16_t msgLen = htons((uint16_t)sizeof(newObsMsg));
 							observer_t oType = observers[j];
 							observer* o = (observer*) oType;
 							if (o->used == 1) {
 								n = send(o->sd, &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
-								n = send(o->sd, &newObsMsg, msgLen * sizeof(char), MSG_DONTWAIT);
+								n = send(o->sd, &newObsMsg, ntohs(msgLen) * sizeof(char), MSG_DONTWAIT);
 							}
 						}
 						o->used = 1;
@@ -311,7 +311,7 @@ int main(int argc, char** argv) {
 						int isPrivate, isActive;
 						int recipientLen;
 						isPrivate = isPrivateMsg(message, &recipientLen);
-						message[msgLen] = '\0';
+						//message[msgLen] = '\0';
 						if (isPrivate) {
 							char recipient[recipientLen];
 							char formattedMsg[msgLen + 14 - (recipientLen + 2)];
@@ -320,19 +320,23 @@ int main(int argc, char** argv) {
 							fMsgLen = htons(fMsgLen);
 							if (!isActive) {	// send warning message
 								char warning[32 + recipientLen];
+								printf("recipientLen: %d\n", recipientLen);
+								printf("recipient: %s\n", recipient);
 								uint16_t warningLen = htons((uint16_t)sizeof(warning));
+								printf("warningLen: %d\n", (int)ntohs(warningLen));
 								int recipientSd, senderSd;
 								sprintf(warning, "Warning: user %s doesn't exist...\n", recipient);
 								getPrivateMsgDestination(observers, participants, p->name, recipient, usedNames, &recipientSd, &senderSd);
 								n = send(senderSd, &warningLen, sizeof(uint16_t), MSG_DONTWAIT);
-								n = send(senderSd, &warning, warningLen * sizeof(uint16_t), MSG_DONTWAIT);
+								n = send(senderSd, &warning, ntohs(warningLen) * sizeof(uint16_t), MSG_DONTWAIT);
+								printf("n: %d\n", n);
 							} else {
 								int recipientSd, senderSd;
 								getPrivateMsgDestination(observers, participants, p->name, recipient, usedNames, &recipientSd, &senderSd);
 								n = send(recipientSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
 								n = send(senderSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
-								n = send(recipientSd, &formattedMsg, fMsgLen * sizeof(char), MSG_DONTWAIT);
-								n = send(senderSd, &formattedMsg, fMsgLen * sizeof(char), MSG_DONTWAIT);
+								n = send(recipientSd, &formattedMsg, ntohs(fMsgLen) * sizeof(char), MSG_DONTWAIT);
+								n = send(senderSd, &formattedMsg, ntohs(fMsgLen) * sizeof(char), MSG_DONTWAIT);
 							}
 						} else {
 							char formattedMsg[msgLen + 14];
@@ -344,7 +348,7 @@ int main(int argc, char** argv) {
 								observer* o = (observer*) oType;
 								if (o->used == 1) {
 									n = send(o->sd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
-									n = send(o->sd, &formattedMsg, fMsgLen * sizeof(char), MSG_DONTWAIT);
+									n = send(o->sd, &formattedMsg, ntohs(fMsgLen) * sizeof(char), MSG_DONTWAIT);
 								}
 							}
 						}
@@ -386,7 +390,7 @@ int main(int argc, char** argv) {
 									sprintf(broadcastMsg, "User %s has joined.\n", username);
 									uint16_t msgLen = htons(sizeof(broadcastMsg));
 									n = send(o->sd, &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
-									n = send(o->sd, &broadcastMsg, msgLen * sizeof(char), MSG_DONTWAIT);
+									n = send(o->sd, &broadcastMsg, ntohs(msgLen) * sizeof(char), MSG_DONTWAIT);
 								}
 							}
 						} else {
@@ -404,26 +408,6 @@ int main(int argc, char** argv) {
 				activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
 			}
 		}
-
-		for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
-			participant_t pType = participants[i];
-			participant* p = (participant*)pType;
-			if (FD_ISSET(p->sd, &outSet)) {
-			}
-		}
-
-		for (int i = 0; i < MAX_NUM_OBSERVERS; i++) {
-			observer_t oType = observers[i];
-			observer* o = (observer*)oType;
-			if (FD_ISSET(o->sd, &outSet)) {
-			}
-		}
-/*
-	close(parSd);
-	close(obsSd);
-	close(servParSd);
-	close(servObsSd);
-*/
 	}
 }
 
@@ -701,8 +685,8 @@ void cleanupParticipant(participant* p, observer_t* observers, TRIE* usedNames) 
 		observer_t oType = observers[j];
 		observer* o = (observer*) oType;
 		if (o->used == 1) {
-			send(o->sd, &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
-			send(o->sd, &leftMsg, msgLen * sizeof(char), MSG_DONTWAIT);
+			int n = send(o->sd, &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
+			n = send(o->sd, &leftMsg, ntohs(msgLen) * sizeof(char), MSG_DONTWAIT);
 		}
 	}
 }

@@ -171,7 +171,7 @@ void run(int sd) {
 		fgets(message, MAX_MSG_LEN + 2, stdin);
 
 		uint16_t msgLen = htons(strlen(message));	// don't include null
-		send(sd, &msgLen, sizeof(uint16_t), 0);
-		send(sd, &message, msgLen * sizeof(char), 0);
+		int n = send(sd, &msgLen, sizeof(uint16_t), 0);
+		n = send(sd, &message, ntohs(msgLen) * sizeof(char), 0);
 	}
 }
