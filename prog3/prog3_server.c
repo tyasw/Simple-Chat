@@ -155,7 +155,6 @@ int main(int argc, char** argv) {
 	TRIE* usedNames = trie_new();
 
 	while (1) {
-		// Set up select() for participants and observers
 		signal(SIGPIPE, SIG_IGN);		// SIGPIPE generated when a client closes
 		fd_set inSet;
 		fd_set outSet;
@@ -236,11 +235,13 @@ int main(int argc, char** argv) {
 				n = recv(o->sd, &nameSize, sizeof(uint8_t), MSG_WAITALL);
 				if (n == 0) {
 					cleanupObserver(o, participants);
+					curNumObservers--;
 				}
 				char username[nameSize];			// Temporary holding spot for new username
 				n = recv(o->sd, &username, sizeof(username), MSG_WAITALL);
 				if (n == 0) {
 					cleanupObserver(o, participants);
+					curNumObservers--;
 				}
 				username[nameSize] = '\0';
 
@@ -260,8 +261,8 @@ int main(int argc, char** argv) {
 
 						// send msg to all observers saying that a new observer has joined
 						for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
-							char newObsMsg[25] = "A new observer has joined";
-							uint16_t msgLen = sizeof(newObsMsg);
+							char newObsMsg[26] = "A new observer has joined\n";
+							uint16_t msgLen = htons(sizeof(newObsMsg));
 							observer_t oType = observers[j];
 							observer* o = (observer*) oType;
 							if (o->used == 1) {
@@ -295,17 +296,19 @@ int main(int argc, char** argv) {
 				if (isActiveParticipant(participants, i)) { // get ready to receive msg
 					uint16_t msgLen;
 					n = recv(p->sd, &msgLen, sizeof(uint16_t), MSG_WAITALL);
+					msgLen = ntohs(msgLen);
 					if (n == 0) {
 						cleanupParticipant(p, observers, usedNames);
+						curNumParticipants--;
 					} else if (msgLen > 1000) {
-						// disconnect on participant and any affiliated observer
+						// disconnect participant and affiliated observer
 						cleanupParticipant(p, observers, usedNames);
+						curNumParticipants--;
 					} else {
 						char message[msgLen];
 						n = recv(p->sd, &message, msgLen * sizeof(char), MSG_WAITALL);
 
 						int isPrivate, isActive;
-
 						int recipientLen;
 						isPrivate = isPrivateMsg(message, &recipientLen);
 						message[msgLen] = '\0';
@@ -314,15 +317,20 @@ int main(int argc, char** argv) {
 							char formattedMsg[msgLen + 14 - (recipientLen + 2)];
 							uint16_t fMsgLen = sizeof(formattedMsg);
 							processMsg(message, formattedMsg, fMsgLen, participants, usedNames, p->name, recipient, &isActive, &isPrivate);
-							if (!isActive) {
-								uint16_t warningLen;
-								char warning[41];
-								// send warning message
+							fMsgLen = htons(fMsgLen);
+							if (!isActive) {	// send warning message
+								char warning[32 + recipientLen];
+								uint16_t warningLen = htons((uint16_t)sizeof(warning));
+								int recipientSd, senderSd;
+								sprintf(warning, "Warning: user %s doesn't exist...\n", recipient);
+								getPrivateMsgDestination(observers, participants, p->name, recipient, usedNames, &recipientSd, &senderSd);
+								n = send(senderSd, &warningLen, sizeof(uint16_t), MSG_DONTWAIT);
+								n = send(senderSd, &warning, warningLen * sizeof(uint16_t), MSG_DONTWAIT);
 							} else {
 								int recipientSd, senderSd;
 								getPrivateMsgDestination(observers, participants, p->name, recipient, usedNames, &recipientSd, &senderSd);
-								n = send(recipientSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT); // recipient
-								n = send(senderSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT); // sender
+								n = send(recipientSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
+								n = send(senderSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
 								n = send(recipientSd, &formattedMsg, fMsgLen * sizeof(char), MSG_DONTWAIT);
 								n = send(senderSd, &formattedMsg, fMsgLen * sizeof(char), MSG_DONTWAIT);
 							}
@@ -330,6 +338,7 @@ int main(int argc, char** argv) {
 							char formattedMsg[msgLen + 14];
 							uint16_t fMsgLen = sizeof(formattedMsg);
 							processMsg(message, formattedMsg, fMsgLen, participants, usedNames, p->name, 0, &isActive, &isPrivate);
+							fMsgLen = htons(fMsgLen);
 							for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
 								observer_t oType = observers[j];
 								observer* o = (observer*) oType;
@@ -373,10 +382,9 @@ int main(int argc, char** argv) {
 								observer_t oType = observers[j];
 								observer* o = (observer*) oType;
 								if (o->affiliated == 1) {
-									char broadcastMsg[28];
+									char broadcastMsg[18 + nameSize];
 									sprintf(broadcastMsg, "User %s has joined.\n", username);
-									uint16_t msgLen = nameSize + 17;
-									broadcastMsg[msgLen] = '\0';
+									uint16_t msgLen = htons(sizeof(broadcastMsg));
 									n = send(o->sd, &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
 									n = send(o->sd, &broadcastMsg, msgLen * sizeof(char), MSG_DONTWAIT);
 								}
@@ -687,9 +695,9 @@ void cleanupParticipant(participant* p, observer_t* observers, TRIE* usedNames) 
 
 	// send msg to all observers saying that a new observer has joined
 	for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
-		char leftMsg[14 + strlen(p->name)];
+		char leftMsg[15 + strlen(p->name)];
 		sprintf(leftMsg, "User %s has left\n", p->name);
-		int msgLen = sizeof(leftMsg);
+		uint16_t msgLen = htons((uint16_t)sizeof(leftMsg));
 		observer_t oType = observers[j];
 		observer* o = (observer*) oType;
 		if (o->used == 1) {

@@ -117,7 +117,6 @@ int main( int argc, char **argv) {
 		}
 		if (valid == 'N') {
 			printf("Valid: %c\n", valid);
-				//close(sd);
 		} else {
 			printf("Valid: %c\n", valid);
 			run(sd);
@@ -160,6 +159,7 @@ void run(int sd) {
 		uint16_t msgLen;
 		int n;
 		n = recv(sd, &msgLen, sizeof(uint16_t), MSG_WAITALL);
+		msgLen = ntohs(msgLen);
 		if (n == 0) {
 			close(sd);
 			exit(EXIT_FAILURE);
@@ -172,9 +172,12 @@ void run(int sd) {
 		}
 
 		// check if msg ends in newline
+		if (msg[msgLen - 1] != '\n') {
+			msg[msgLen - 1] = '\n';
+		}
+		msg[msgLen] = '\0';
 
 		// print msg
-		msg[msgLen] = '\0';
-		printf("%s\n", msg);
+		printf("%s", msg);
 	}
 }

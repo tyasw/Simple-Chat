@@ -170,7 +170,7 @@ void run(int sd) {
 		printf("Enter message: ");
 		fgets(message, MAX_MSG_LEN + 2, stdin);
 
-		uint16_t msgLen = strlen(message) - 1;	// don't include null
+		uint16_t msgLen = htons(strlen(message));	// don't include null
 		send(sd, &msgLen, sizeof(uint16_t), 0);
 		send(sd, &message, msgLen * sizeof(char), 0);
 	}
