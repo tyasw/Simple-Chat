@@ -20,7 +20,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
-#define MAX_WORD_LEN 10
+#define MAX_ACCEPTABLE_NAME_SIZE 100
 #define MAX_MSG_LEN 1000
 
 void getUserName(char* username);
@@ -89,7 +89,7 @@ int main( int argc, char **argv) {
 
 	if (valid == 'Y') {
 		// Prompt for username
-		char username[MAX_WORD_LEN + 2];	// max length + newline + null
+		char username[MAX_ACCEPTABLE_NAME_SIZE];	// max length + newline + null
 		getUserName(username);
 		uint8_t nameLen = strlen(username);
 
@@ -146,13 +146,12 @@ void getUserName(char* username) {
 	printf("Please enter a 1 - 10 character username. It may only contain\n");
 	printf("upper and lower-case letters, numbers, and underscores: ");
 
-	fgets(username, MAX_WORD_LEN + 2, stdin);
+	fgets(username, MAX_ACCEPTABLE_NAME_SIZE + 2, stdin);
 	uint8_t nameLen = strlen(username) - 1;		// don't include the null
 	printf("You entered: %s\n", username);
-	while (nameLen == 0 || username[nameLen] != '\n') {
-		// Clear fgets buffer so fgets doesn't read chars we've previously typed
+	while (nameLen == 0 || nameLen > 10) {
 		printf("Please try again: ");
-		fgets(username, MAX_WORD_LEN + 2, stdin);
+		fgets(username, MAX_ACCEPTABLE_NAME_SIZE, stdin);
 		nameLen = strlen(username) - 1;
 		printf("You entered: %s\n", username);
 	}
@@ -171,7 +170,7 @@ void run(int sd) {
 		fgets(message, MAX_MSG_LEN + 2, stdin);
 
 		uint16_t msgLen = htons(strlen(message));	// don't include null
-		int n = send(sd, &msgLen, sizeof(uint16_t), 0);
-		n = send(sd, &message, ntohs(msgLen) * sizeof(char), 0);
+		send(sd, &msgLen, sizeof(uint16_t), 0);
+		send(sd, &message, ntohs(msgLen) * sizeof(char), 0);
 	}
 }

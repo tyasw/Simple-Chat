@@ -42,17 +42,21 @@ typedef struct observerSpot {
 
 typedef struct observer* observer_t;
 
-/* nextAvailParticipant
+/* initListeningConnection
  *
- * Returns the next available socket descriptor for a participant.
  */
-int nextAvailParticipant(participant_t* participants, participant_t* nextAvail);
+int initListeningConnection(int* sd, struct protoent* ptrp, int* optVal, struct sockaddr* addr);
 
-/* nextAvailObserver
+/* setupNextAvailParticipant
  *
- * Returns the next available socket descriptor for an observer.
+ * Find the next participant slot that is open. Set it up.
  */
-int nextAvailObserver(observer_t* observers, observer_t* nextAvail);
+int setupNextAvailParticipant(participant_t* participants, participant_t* nextAvail, int parSd, struct sockaddr_in* parAddr);
+
+/* setupNextAvailObserver
+ *
+ */
+int setupNextAvailObserver(observer_t* observers, observer_t* nextAvail, int obsSd, struct sockaddr_in* obsAddr);
 
 /* isActiveParticipant
  *
@@ -82,28 +86,16 @@ int canAffiliate(char* username, TRIE* names, int** parSd, int* isAvailable, par
 void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
 					participant_t* parSds, observer_t* obsSds);
 
-/* processPublicMsg
- *
- * message				The message a participant sent the server
- * newMsgLen			length of the formatted message
- * formattedMsg			The formatted message we will send
- * username				Who sent us the message
- *
- * Prepend characters to a public message so that the sender of the message
- * is identified, and the message looks pretty.
- */
-int processPublicMsg(char* message, uint16_t newMsgLen, char* formattedMsg, char* username);
-
 /* processMsg
  *
  * Process a message sent by a participant. First, check if the recipient is
  * private. Set isPrivate if it is. Then, check if the recipient is active, and
  * set isActive accordingly. Finally, format the message so that it looks pretty.
  */
-void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participant_t* participants, TRIE* names, char* sender, char* recipient, int* isActive, int* isPrivate);
+void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participant_t* participants, TRIE* names, char* sender, char* recipient, int* isActive, int isPrivate);
 
 
-/* getPrivateMsgDestination
+/* getPrivateMsgDest
  *
  * observers				The list of observers
  * participants				The list of participants
@@ -116,7 +108,7 @@ void processMsg(char* message, char* formattedMsg, uint16_t newMsgLen, participa
  * Get the socket desciptors of the observers we want to send a private message
  * to. If the recipient is valid, both 
  */
-void getPrivateMsgDestination(observer_t* observers, participant_t* participants, char* senderName, char* recipientName, TRIE* names, int* recipientObserverSd, int* senderObserverSd);
+void getPrivateMsgDest(observer_t* observers, participant_t* participants, char* senderName, char* recipientName, TRIE* names, int* recipientObserverSd, int* senderObserverSd);
 
 /* isPrivateMsg
  *
@@ -131,9 +123,9 @@ int isPrivateMsg(char* message, int* recipientLen);
 /* cleanupObserver
  *
  */
-void cleanupObserver(observer* o, participant_t* participants);
+void cleanupObserver(observer* o, int oIndex, observer_t* observers, participant_t* participants);
 
 /* cleanupParticipant
  *
  */
-void cleanupParticipant(participant* p, observer_t* observers, TRIE* usedNames);
+void cleanupParticipant(participant* p, int pIndex, participant_t* participants, observer_t* observers, TRIE* usedNames);
