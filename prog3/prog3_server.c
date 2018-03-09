@@ -3,7 +3,8 @@
  * 2/22/18
  * William Tyas
  *
- * Description: the server for a simple chat application.
+ * Description: the server for a simple chat application. The code to initiailize
+ * a connection is taken from the original demo program.
  */
 
 #include "trie.h"
@@ -45,6 +46,7 @@ int main(int argc, char** argv) {
 	observer_t observers[255];			// observer structs
 	int curNumObservers = 0;
 	int curNumParticipants = 0;
+	struct timeval tv;			// Stores time elapsed since setup of select
 	int activity;				// return value of select()
 	char valid;					// Will we let client join?
 
@@ -62,7 +64,6 @@ int main(int argc, char** argv) {
 		fprintf(stderr,"./server participant_port observer_port\n");
 		exit(EXIT_FAILURE);
 	}
-
 
 	pport = atoi(argv[1]);
 	if (pport > 0) {
@@ -97,9 +98,16 @@ int main(int argc, char** argv) {
 		fd_set inSet;
 		fd_set outSet;
 
+		// Pick smallest timeout left
+		pickSmallestTime(participants, observers);
+
 		int maxFd;
 		setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers, &maxFd);
 		activity = select(maxFd + 1, &inSet, &outSet, NULL, NULL);
+
+		// Determine how much time has elapsed, update time remaining for each
+		// client. If time reaches 0, close on them.
+
 		if (activity < 0) {
 			perror("Select:\n");
 		}
@@ -190,7 +198,6 @@ int main(int argc, char** argv) {
 							char response;
 							if (!used) {
 								if (isAvailable) {
-									o->affiliated = 1;
 									assert(*parSdIndex >= 0);
 									response = 'Y';
 									n = send(o->sd, &response, sizeof(char), MSG_DONTWAIT);
@@ -202,13 +209,13 @@ int main(int argc, char** argv) {
 									for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
 										if (observers[j] != NULL) {
 											observer* o = (observer*)observers[j];
-											if (o->used == 1) {
+											if (o->affiliated) {
 												n = send(o->sd, &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
 												n = send(o->sd, &newObsMsg, ntohs(msgLen) * sizeof(char), MSG_DONTWAIT);
 											}
 										}
 									}
-									o->used = 1;
+									o->affiliated = 1;
 								} else {
 									response = 'T';
 									n = send(o->sd, &response, sizeof(char), MSG_DONTWAIT);
@@ -293,7 +300,7 @@ int main(int argc, char** argv) {
 									for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
 										if (observers[j] != NULL) {
 											observer* o = (observer*)observers[j];
-											if (o->used == 1) {
+											if (o->affiliated) {
 												n = send(o->sd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
 												n = send(o->sd, &formattedMsg, ntohs(fMsgLen) * sizeof(char), MSG_DONTWAIT);
 											}
@@ -347,7 +354,7 @@ int main(int argc, char** argv) {
 										for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
 											if (observers[j] != NULL) {
 												observer* o = (observer*)observers[j];
-												if (o->affiliated == 1) {
+												if (o->affiliated) {
 													n = send(o->sd, &msgLen, sizeof(uint16_t), MSG_DONTWAIT);
 													n = send(o->sd, &broadcastMsg, ntohs(msgLen) * sizeof(char), MSG_DONTWAIT);
 												}
@@ -403,6 +410,30 @@ int initListeningConnection(int* sd, struct protoent* ptrp, int* optVal, struct 
 	}
 	return 1;
 }
+
+/* pickSmallestTime
+ *
+ */
+void pickSmallestTime(participant_t* participants, observer_t* observers) {
+	int minTime = 60;
+	for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
+		if (participants[i] != NULL) {
+			participant* p = (participant*)participants[i];
+			if (p->timeLeft >= 0) {
+				minTime = min(minTime, p->timeLeft);
+			}
+		}
+	}
+	for (int i = 0; i < MAX_NUM_OBSERVERS; i++) {
+		if (observers[i] != NULL) {
+			observer* o = (observer*)observers[i];
+			if (o->timeLeft >= 0) {
+				minTime = min(minTime, o->timeLeft);
+			}
+		}
+	}
+}
+
 /* setupSelect
  *
  */
@@ -455,6 +486,7 @@ int setupNextAvailParticipant(participant_t* participants, participant_t* nextAv
 		p->obsSdIndex = -1;
 		p->addr = *parAddr;
 		p->active = 0;
+		p->timeLeft = -1;
 		pSlot = (participant_t) p;
 		*nextAvail = pSlot;
 		participants[i] = pSlot;
@@ -478,11 +510,11 @@ int setupNextAvailObserver(observer_t* observers, observer_t* nextAvail, int obs
 	
 	if (i < MAX_NUM_OBSERVERS) {
 		observer* o = malloc(sizeof(observer));
-		o->used = 1;
 		o->affiliated = 0;
 		o->sd = obsSd;
 		o->parSdIndex = -1;
 		o->addr = *obsAddr;
+		o->timeLeft = -1;
 		oSlot = (observer_t) o;
 		*nextAvail = oSlot;
 		observers[i] = oSlot;
@@ -679,7 +711,6 @@ int isPrivateMsg(char* message, int* recipientLen) {
 void cleanupObserver(observer* o, int oIndex, observer_t* observers, participant_t* participants) {
 	close(o->sd);
 	o->affiliated = 0;
-	o->used = 0;
 	o->sd = 0;
 
 	// if affiliated with active participant, make available
@@ -690,6 +721,7 @@ void cleanupObserver(observer* o, int oIndex, observer_t* observers, participant
 		}
 		o->parSdIndex = -1;
 	}
+	o->timeLeft = -1;
 
 	free(o);
 	observers[oIndex] = NULL;
@@ -709,6 +741,7 @@ void cleanupParticipant(participant* p, int pIndex, participant_t* participants,
 		p->obsSdIndex = -1;
 	}
 	p->active = 0;
+	p->timeLeft = -1;
 	trie_del(usedNames, p->name);
 
 	// send msg to all observers saying that the participant has left

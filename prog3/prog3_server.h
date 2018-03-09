@@ -25,12 +25,12 @@ typedef struct participantSpot {
 	int obsSdIndex;				// index of observer
 	struct sockaddr_in addr;	// address
 	int active;					// is this an active participant?
+	int timeLeft;
 } participant;
 
 typedef struct participant* participant_t;
 
 typedef struct observerSpot {
-	int used;					// is spot being used?
 	int affiliated;				/* is affiliated with a participant yet? Won't
 								 * be in the time between observer connecting
 								 * and entering participant name
@@ -38,6 +38,7 @@ typedef struct observerSpot {
 	int sd;						// observer's socket descriptor
 	int parSdIndex;				// index of participant observer is watching
 	struct sockaddr_in addr;	// address
+	int timeLeft;
 } observer;
 
 typedef struct observer* observer_t;
