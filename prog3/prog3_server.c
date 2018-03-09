@@ -26,24 +26,26 @@
 #define MAX_NUM_OBSERVERS 3
 #define QLEN 6
 
+#define max(x,y) ((x) > (y) ? (x) : (y)) 
+
 int main(int argc, char** argv) {
-	struct protoent *ptrp;		/* pointer to a protocol table entry */
+	struct protoent *ptrp;		// pointer to a protocol table entry
 	struct sockaddr_in parAddr;	// temp structure to hold participant's address
 	struct sockaddr_in obsAddr; // temp structure to hold observer's address
-	struct sockaddr_in sParAd;	/* structure to hold server's address and participant */
-	struct sockaddr_in sObsAd;	/* structure to hold server's address and observer */
+	struct sockaddr_in sParAd;	// structure to hold server's address and participant
+	struct sockaddr_in sObsAd;	// structure to hold server's address and observer
 
-	int servObsSd, servParSd;	/* socket descriptors for incoming connections */
-	int pport, oport;			/* protocol addresses */
-	int obsALen, parALen;		/* length of addresses */
-	int optval = 1;				/* boolean value when we set socket option */
-	int n;						/* return value of recv */
+	int servObsSd, servParSd;	// socket descriptors for incoming connections
+	int pport, oport;			// protocol addresses
+	int obsALen, parALen;		// length of addresses
+	int optval = 1;				// boolean value when we set socket option
+	int n;						// return value of recv
 
-	participant_t participants[255];		// participant structs
-	observer_t observers[255];				// observer structs
-	int activity;				/* return value of select() */
+	participant_t participants[255];	// participant structs
+	observer_t observers[255];			// observer structs
 	int curNumObservers = 0;
 	int curNumParticipants = 0;
+	int activity;				// return value of select()
 	char valid;					// Will we let client join?
 
 	for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
@@ -95,8 +97,9 @@ int main(int argc, char** argv) {
 		fd_set inSet;
 		fd_set outSet;
 
-		setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers);
-		activity = select(FD_SETSIZE, &inSet, &outSet, NULL, NULL);
+		int maxFd;
+		setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers, &maxFd);
+		activity = select(maxFd + 1, &inSet, &outSet, NULL, NULL);
 		if (activity < 0) {
 			perror("Select:\n");
 		}
@@ -123,8 +126,8 @@ int main(int argc, char** argv) {
 				valid = 'Y';
 				n = send(p->sd, (const void*)&valid, sizeof(char), MSG_DONTWAIT);
 
-				setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers);
-				activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
+				setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers, &maxFd);
+				activity = select(maxFd + 1, &inSet, NULL, NULL, NULL);
 			} else {											// Disconnect
 				valid = 'N';
 				n = send(parSd, (const void*)&valid, sizeof(char), MSG_DONTWAIT);
@@ -152,8 +155,8 @@ int main(int argc, char** argv) {
 				observer* o = (observer*)nextAvail;
 				valid = 'Y';
 				n = send(o->sd, (const void*)&valid, sizeof(char), MSG_DONTWAIT);
-				setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers);
-				activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
+				setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers, &maxFd);
+				activity = select(maxFd + 1, &inSet, NULL, NULL, NULL);
 			} else {											// Disconnect
 				valid = 'N';
 				n = send(obsSd, (const void*)&valid, sizeof(char), MSG_DONTWAIT);
@@ -196,7 +199,6 @@ int main(int argc, char** argv) {
 
 									char newObsMsg[26] = "A new observer has joined\n";
 									uint16_t msgLen = htons((uint16_t)sizeof(newObsMsg));
-									// send msg to all observers saying that a new observer has joined
 									for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
 										if (observers[j] != NULL) {
 											observer* o = (observer*)observers[j];
@@ -219,8 +221,8 @@ int main(int argc, char** argv) {
 							}
 						}
 					}
-					setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers);
-					activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
+					setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers, &maxFd);
+					activity = select(maxFd + 1, &inSet, NULL, NULL, NULL);
 				}
 			}
 		}
@@ -247,52 +249,61 @@ int main(int argc, char** argv) {
 								cleanupParticipant(p, i, participants, observers, usedNames);
 								curNumParticipants--;
 							}
-
-							int isPrivate, isActive;
-							int recipientLen;
 							message[msgLen] = '\0';
-							isPrivate = isPrivateMsg(message, &recipientLen);
-							if (isPrivate) {
-								char recipient[recipientLen];
-								char formattedMsg[msgLen + 14 - (recipientLen + 2)];
-								uint16_t fMsgLen = sizeof(formattedMsg);
-								if (fMsgLen == 14) {
-									printf("Private message requries a space after the recipient name.\n");
-								} else {
-									processMsg(message, formattedMsg, fMsgLen, participants, usedNames, p->name, recipient, &isActive, isPrivate);
-									fMsgLen = htons(fMsgLen);
-									if (!isActive) {	// send warning message
-										char warning[32 + recipientLen];
-										uint16_t warningLen = htons((uint16_t)sizeof(warning));
-										int recipientSd, senderSd;
-										sprintf(warning, "Warning: user %s doesn't exist...\n", recipient);
-										getPrivateMsgDest(observers, participants, p->name, recipient, usedNames, &recipientSd, &senderSd);
-										n = send(senderSd, &warningLen, sizeof(uint16_t), MSG_DONTWAIT);
-										n = send(senderSd, &warning, ntohs(warningLen) * sizeof(char), MSG_DONTWAIT);
+							int valid = isValidMsg(message);
+							if (valid) {
+								int isPrivate, isActive;
+								int recipientLen;
+								isPrivate = isPrivateMsg(message, &recipientLen);
+								if (isPrivate) {
+									char recipient[recipientLen];
+									char formattedMsg[msgLen + 14 - (recipientLen + 2)];
+									uint16_t fMsgLen = sizeof(formattedMsg);
+									if (fMsgLen == 14) {
+										printf("Private message requries a space after the recipient name.\n");
 									} else {
-										int recipientSd, senderSd;
-										getPrivateMsgDest(observers, participants, p->name, recipient, usedNames, &recipientSd, &senderSd);
-										n = send(recipientSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
-										n = send(senderSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
-										n = send(recipientSd, &formattedMsg, ntohs(fMsgLen) * sizeof(char), MSG_DONTWAIT);
-										n = send(senderSd, &formattedMsg, ntohs(fMsgLen) * sizeof(char), MSG_DONTWAIT);
+										processMsg(message, formattedMsg, fMsgLen, participants, usedNames, p->name, recipient, &isActive, isPrivate);
+										fMsgLen = htons(fMsgLen);
+										if (!isActive) {	// send warning message
+											char warning[32 + recipientLen];
+											uint16_t warningLen = htons((uint16_t)sizeof(warning));
+											int recipientSd, senderSd;
+											sprintf(warning, "Warning: user %s doesn't exist...\n", recipient);
+											getPrivateMsgDest(observers, participants, p->name, recipient, usedNames, &recipientSd, &senderSd);
+											if (recipientSd >= 0) {
+												n = send(senderSd, &warningLen, sizeof(uint16_t), MSG_DONTWAIT);
+												n = send(senderSd, &warning, ntohs(warningLen) * sizeof(char), MSG_DONTWAIT);
+											}
+										} else {
+											int recipientSd, senderSd;
+											getPrivateMsgDest(observers, participants, p->name, recipient, usedNames, &recipientSd, &senderSd);
+											if (recipientSd >= 0) {
+												n = send(recipientSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
+												n = send(recipientSd, &formattedMsg, ntohs(fMsgLen) * sizeof(char), MSG_DONTWAIT);
+											}
+											n = send(senderSd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
+											n = send(senderSd, &formattedMsg, ntohs(fMsgLen) * sizeof(char), MSG_DONTWAIT);
+										}
 									}
-								}
-							} else {
-								char formattedMsg[msgLen + 14];
-								uint16_t fMsgLen = sizeof(formattedMsg);
-								processMsg(message, formattedMsg, fMsgLen, participants, usedNames, p->name, 0, &isActive, isPrivate);
-								fMsgLen = htons(fMsgLen);
-								for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
-									if (observers[j] != NULL) {
-										observer* o = (observer*)observers[j];
-										if (o->used == 1) {
-											n = send(o->sd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
-											n = send(o->sd, &formattedMsg, ntohs(fMsgLen) * sizeof(char), MSG_DONTWAIT);
+								} else {
+									char formattedMsg[msgLen + 14];
+									uint16_t fMsgLen = sizeof(formattedMsg);
+									processMsg(message, formattedMsg, fMsgLen, participants, usedNames, p->name, 0, &isActive, isPrivate);
+									fMsgLen = htons(fMsgLen);
+									for (int j = 0; j < MAX_NUM_OBSERVERS; j++) {
+										if (observers[j] != NULL) {
+											observer* o = (observer*)observers[j];
+											if (o->used == 1) {
+												n = send(o->sd, &fMsgLen, sizeof(uint16_t), MSG_DONTWAIT);
+												n = send(o->sd, &formattedMsg, ntohs(fMsgLen) * sizeof(char), MSG_DONTWAIT);
+											}
 										}
 									}
 								}
+							} else {
+								printf("Invalid message.\n");
 							}
+
 						}
 					} else { // negotiating username
 						uint8_t nameSize;
@@ -355,8 +366,8 @@ int main(int argc, char** argv) {
 							}
 						}
 					}
-					setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers);
-					activity = select(FD_SETSIZE, &inSet, NULL, NULL, NULL);
+					setupSelect(&inSet, &outSet, servParSd, servObsSd, participants, observers, &maxFd);
+					activity = select(maxFd + 1, &inSet, NULL, NULL, NULL);
 				}
 			}
 		}
@@ -396,24 +407,31 @@ int initListeningConnection(int* sd, struct protoent* ptrp, int* optVal, struct 
  *
  */
 void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
-					participant_t* participants, observer_t* observers) {
+					participant_t* participants, observer_t* observers, int* maxFd) {
+	int fdMax = 0;
 	FD_ZERO(inSet);
 	FD_ZERO(outSet);
 
 	FD_SET(servParSd, inSet);
+	fdMax = max(fdMax, servParSd);
 	FD_SET(servObsSd, inSet);
+	fdMax = max(fdMax, servObsSd);
 	for (int i = 0; i < MAX_NUM_PARTICIPANTS; i++) {
 		if (participants[i] != NULL) {
 			participant* p = (participant*)participants[i];
 			FD_SET(p->sd, inSet);
 			FD_SET(p->sd, outSet);
+			fdMax = max(fdMax, p->sd);
 		}
 		if (observers[i] != NULL) {
 			observer* o = (observer*)observers[i];
 			FD_SET(o->sd, inSet);
 			FD_SET(o->sd, outSet);
+			fdMax = max(fdMax, o->sd);
 		}
 	}
+
+	*maxFd = fdMax;
 }
 
 /* setupNextAvailParticipant
@@ -518,6 +536,21 @@ int canAffiliate(char* username, TRIE* names, int** parSd, int* isAvailable, par
 	return !found;
 }
 
+/* isValidMsg
+ *
+ */
+int isValidMsg(char* message) {
+	int valid = 0;
+	int i = 0;
+	while (!valid && message[i] != '\0') {
+		if (message[i] != ' ') {
+			valid = 1;
+		}
+		i++;
+	}
+	return valid;
+}
+
 /* processMsg
  *
  */
@@ -607,13 +640,21 @@ void getPrivateMsgDest(observer_t* observers, participant_t* participants, char*
 	int* parSd = 0;
 	trie_search(names, senderName, (void**)&parSd);
 	participant* p = (participant*)participants[*parSd];
-	observer* o = (observer*)observers[p->obsSdIndex];
-	*senderSd = o->sd;
+	if (p->obsSdIndex >= 0) {
+		observer* o = (observer*)observers[p->obsSdIndex];
+		*senderSd = o->sd;
+	} else {
+		*senderSd = -1;
+	}
 
 	trie_search(names, recipientName, (void**)&parSd);
 	p = (participant*)participants[*parSd];
-	o = (observer*)observers[p->obsSdIndex];
-	*recipientSd = o->sd;
+	if (p->obsSdIndex >= 0) {
+		observer* o = (observer*)observers[p->obsSdIndex];
+		*recipientSd = o->sd;
+	} else {
+		*recipientSd = -1;
+	}
 }
 
 /* isPrivateMsg

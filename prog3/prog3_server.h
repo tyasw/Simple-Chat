@@ -84,7 +84,17 @@ int canAffiliate(char* username, TRIE* names, int** parSd, int* isAvailable, par
  * Reset the file descriptors we want select to monitor
  */
 void setupSelect(fd_set* inSet, fd_set* outSet, int servParSd, int servObsSd,
-					participant_t* parSds, observer_t* obsSds);
+					participant_t* parSds, observer_t* obsSds, int* maxFd);
+
+/* isValidMsg
+ *
+ * message		The message
+ *
+ * Checks to see if the message sent by a participant follows the proper
+ * conventions. There should be at least one non-space character in the message.
+ * Message should be null-terminated when passed in to this function.
+ */
+int isValidMsg(char* message);
 
 /* processMsg
  *
