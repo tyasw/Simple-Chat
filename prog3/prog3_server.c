@@ -23,8 +23,8 @@
 #include <errno.h>
 #include <signal.h>
 
-#define MAX_NUM_PARTICIPANTS 3
-#define MAX_NUM_OBSERVERS 3
+#define MAX_NUM_PARTICIPANTS 255
+#define MAX_NUM_OBSERVERS 255
 #define QLEN 6
 #define TIMEOUT 60
 
