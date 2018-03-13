@@ -3,7 +3,9 @@
  *
  *   Author:
  *     William Tyas
- *   Description:
+ *
+ *   Description: A participant client. A user uses a participant to send
+ *		messages on the group chat.
  *
  *   Uses demo_client.c program from Winter 2018
  */
@@ -13,6 +15,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -85,10 +88,16 @@ int main( int argc, char **argv) {
 		exit(EXIT_FAILURE);
 	}
 
+	signal(SIGPIPE, SIG_IGN);
+
 	n = recv(sd, &valid, sizeof(char), MSG_WAITALL);	
+	if (n == 0) {
+		printf("The server has closed the connection.\n");
+		close(sd);
+		exit(EXIT_FAILURE);
+	}
 
 	if (valid == 'Y') {
-		// Prompt for username
 		char username[MAX_ACCEPTABLE_NAME_SIZE];	// max length + newline + null
 		getUserName(username);
 		uint8_t nameLen = strlen(username);
@@ -98,12 +107,12 @@ int main( int argc, char **argv) {
 
 		n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
 		if (n == 0) {
+			printf("The server has closed the connection.\n");
 			close(sd);
 			exit(EXIT_FAILURE);
 		}
 		while (valid != 'Y') {
 			if (valid == 'T') {
-				// timer is reset; try again
 				printf("%s is already taken. Please try again.\n", username);
 				getUserName(username);
 				nameLen = strlen(username);
@@ -111,11 +120,11 @@ int main( int argc, char **argv) {
 				send(sd, &username, nameLen * sizeof(char), 0);
 				n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
 				if (n == 0) {
+					printf("The server has closed the connection.\n");
 					close(sd);
 					exit(EXIT_FAILURE);
 				}
 			} else if (valid == 'I') {
-				// try again, timer not reset
 				printf("%s is an invalid name. Please try again.\n", username);
 				getUserName(username);
 				nameLen = strlen(username);
@@ -123,6 +132,7 @@ int main( int argc, char **argv) {
 				send(sd, &username, nameLen * sizeof(char), 0);
 				n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
 				if (n == 0) {
+					printf("The server has closed the connection.\n");
 					close(sd);
 					exit(EXIT_FAILURE);
 				}

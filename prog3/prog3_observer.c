@@ -3,7 +3,11 @@
  *
  *   Author:
  *     William Tyas
- *   Description:
+ *
+ *   Description: An observer client. An observer observes a participant.
+ *		It displays all the public messages that other participants have
+ *		created, as well as private messages destined for the participant
+ *		it is observing.
  *
  *   Uses demo_client.c program from Winter 2018
  */
@@ -13,6 +17,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
+#include <signal.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -84,8 +90,11 @@ int main( int argc, char **argv) {
 		exit(EXIT_FAILURE);
 	}
 
+	signal(SIGPIPE, SIG_IGN);
+
 	n = recv(sd, &valid, sizeof(char), MSG_WAITALL);	
 	if (n == 0) {
+		printf("The server has closed the connection.\n");
 		close(sd);
 		exit(EXIT_FAILURE);
 	}
@@ -95,11 +104,18 @@ int main( int argc, char **argv) {
 		getUserName(username);
 		uint8_t nameLen = strlen(username);
 
-		send(sd, &nameLen, sizeof(uint8_t), 0);
-		send(sd, &username, nameLen * sizeof(char), 0);
+		int success = send(sd, &nameLen, sizeof(uint8_t), 0);
+		if (success == -1 && errno == EAGAIN) {
+			printf("Timeout.\n");
+		}
+		success = send(sd, &username, nameLen * sizeof(char), 0);
+		if (success == -1 && errno == EAGAIN) {
+			printf("Timeout.\n");
+		}
 
 		n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
 		if (n == 0) {
+			printf("The server has closed the connection.\n");
 			close(sd);
 			exit(EXIT_FAILURE);
 		}
@@ -107,10 +123,17 @@ int main( int argc, char **argv) {
 			printf("Valid: %c\n", valid);
 			getUserName(username);
 			nameLen = strlen(username);
-			send(sd, &nameLen, sizeof(uint8_t), 0);
-			send(sd, &username, nameLen * sizeof(char), 0);
+			success = send(sd, &nameLen, sizeof(uint8_t), 0);
+			if (success == -1 && errno == EAGAIN) {
+				printf("Timeout.\n");
+			}
+			success = send(sd, &username, nameLen * sizeof(char), 0);
+			if (success == -1 && errno == EAGAIN) {
+				printf("Timeout.\n");
+			}
 			n = recv(sd, &valid, sizeof(char), MSG_WAITALL);
 			if (n == 0) {
+				printf("The server has closed the connection.\n");
 				close(sd);
 				exit(EXIT_FAILURE);
 			}
@@ -161,12 +184,14 @@ void run(int sd) {
 		n = recv(sd, &msgLen, sizeof(uint16_t), MSG_WAITALL);
 		msgLen = ntohs(msgLen);
 		if (n == 0) {
+			printf("The server has closed the connection.\n");
 			close(sd);
 			exit(EXIT_FAILURE);
 		}
 		char msg[msgLen];
 		n = recv(sd, &msg, msgLen * sizeof(char), MSG_WAITALL);
 		if (n == 0) {
+			printf("The server has closed the connection.\n");
 			close(sd);
 			exit(EXIT_FAILURE);
 		}
